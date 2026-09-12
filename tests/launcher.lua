@@ -52,16 +52,34 @@ assert(call[3].argv[1] == "code" and dismissed)
 dismissed = false; state.command("cancel"); assert(dismissed)
 
 local tree = launcher.content(state)
-local palette = tree.children[1].children[1]
+assert(tree.width == "fill" and tree.height == "fill" and tree.padding == 12)
+local palette = tree.children[1]
+assert(palette.children[3].flex == 1)
 assert(palette.children[2].autofocus and palette.children[2].on_command == state.command)
-assert(palette.children[3].children[1].children[1].children[2].background ~= "#00000000")
+assert(palette.children[3].children[1].background ~= "#00000000")
 assert(#launcher.search({ {id="x", name="Other", generic_name=ouro.json.null, exec="x"} }, "absent") == 0)
 local many = {}
 for index = 1, 10 do many[index] = {id=tostring(index), name=string.format("App %02d", index), exec="app"} end
-state.entries:set(many); state.change(""); state.selected:set(9)
-local rows = launcher.content(state).children[1].children[1].children[3].children
+state.entries:set(many); state.change("")
+for _ = 1, 8 do state.command("next") end
+assert(state.selected() == 9 and state.first() == 3)
+local rows = launcher.content(state).children[1].children[3].children
 assert(#rows == 7 and rows[7].key == "application-9")
-assert(rows[7].children[1].children[2].background ~= "#00000000")
+assert(rows[7].background ~= "#00000000")
+state.command("previous")
+assert(state.selected() == 8 and state.first() == 3)
+for _ = 1, 5 do state.command("previous") end
+assert(state.selected() == 3 and state.first() == 3)
+state.command("previous")
+assert(state.selected() == 2 and state.first() == 2)
+state.change(""); state.command("previous")
+assert(state.selected() == 10 and state.first() == 4)
+state.command("next")
+assert(state.selected() == 1 and state.first() == 1)
+state.command("previous"); state.change("App 02")
+assert(state.selected() == 1 and state.first() == 1 and #state.results() == 1)
+state.change("missing"); state.command("previous")
+assert(state.selected() == 1 and state.first() == 1 and #state.results() == 0)
 
 ouro.date = function() return "12:00" end
 ouro.time = function() return 0 end

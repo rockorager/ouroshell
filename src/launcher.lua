@@ -2,10 +2,13 @@ local ouro = require("ouro")
 
 local M = {}
 
+local visible_rows = 7
+
 local colors = {
-  selected = "#293B70",
-  foreground = "#F1F3F5", muted = "#A7ABB2", error = "#FF9592",
-  transparent = "#00000000", hover = "#2B2E33",
+  selected = "#253451", selected_border = "#425C89",
+  foreground = "#ECEFF4", muted = "#929AA8", error = "#FF9592",
+  input = "#111317", border = "#363C47",
+  transparent = "#00000000", hover = "#242A34",
 }
 
 local function normalized(value)
@@ -64,6 +67,7 @@ function M.new(services)
   local state = {
     entries = ouro.signal(services.entries or {}),
     query = ouro.signal(""), selected = ouro.signal(1),
+    first = ouro.signal(1),
     phase = ouro.signal(services.phase or "loading"),
     message = ouro.signal(nil), launching = ouro.signal(false),
   }
@@ -72,12 +76,18 @@ function M.new(services)
   function state.change(value)
     state.query:set(value)
     state.selected:set(1)
+    state.first:set(1)
     state.message:set(nil)
   end
   function state.move(delta)
     local count = #state.results()
-    if count == 0 then state.selected:set(1); return end
-    state.selected:set(((state.selected() - 1 + delta) % count) + 1)
+    if count == 0 then state.selected:set(1); state.first:set(1); return end
+    local selected = ((state.selected() - 1 + delta) % count) + 1
+    local first = state.first()
+    if selected < first then first = selected
+    elseif selected >= first + visible_rows then first = selected - visible_rows + 1 end
+    state.selected:set(selected)
+    state.first:set(math.min(first, math.max(1, count - visible_rows + 1)))
   end
   function state.launch(entry)
     entry = entry or state.results()[state.selected()]
@@ -132,44 +142,47 @@ end
 function M.content(state)
   local results, selected = state.results(), state.selected()
   local rows = {}
-  local first = math.max(1, selected - 6)
-  for index = first, math.min(#results, first + 6) do
+  local first = state.first()
+  for index = first, math.min(#results, first + visible_rows - 1) do
     local entry = results[index]
     local icon = entry.icon
-    if not icon or icon == ouro.json.null then icon = "application-x-executable" end
-    rows[#rows + 1] = ouro.box {
-      key = "application-" .. entry.id, height = 44, padding = 6,
-      children = { ouro.row { key = "row", gap = 12, cross_alignment = "center", children = {
-        ouro.xdg.icon {
-          key = "icon", name = icon, theme = "hicolor", width = 28, height = 28, alt = entry.name,
-        },
-        ouro.button {
-          key = "launch", label = entry.name, height = 32, padding_x = 8,
-          background = index == selected and colors.selected or colors.transparent,
-          foreground = colors.foreground, hover = colors.hover,
-          on_press = function() state.launch(entry) end,
-        },
+    if not icon or icon == ouro.json.null then icon = "application-x-executable-symbolic" end
+    rows[#rows + 1] = ouro.button {
+      key = "application-" .. entry.id, label = entry.name, height = 44, padding_x = 12, radius = 7,
+      background = index == selected and colors.selected or colors.transparent,
+      border = index == selected and colors.selected_border or colors.transparent, border_width = 1,
+      foreground = colors.foreground, hover = colors.hover,
+      on_press = function() state.launch(entry) end,
+      children = { ouro.box { key = "contents", width = "fill", children = {
+        ouro.row { key = "row", gap = 12, cross_alignment = "center", children = {
+          ouro.xdg.icon {
+            key = "icon", name = icon, theme = "Adwaita", width = 24, height = 24, alt = entry.name,
+          },
+          ouro.text {
+            key = "name", text = entry.name, size = 15, foreground = colors.foreground,
+            flex = 1, max_lines = 1, overflow = "ellipsis",
+          },
+        } },
       } } },
     }
   end
   local text, foreground = status(state, results)
   return ouro.box {
-    key = "scrim", width = "fill", height = "fill", alignment = "center",
+    key = "palette", width = "fill", height = "fill", surface = "card", padding = 12,
     children = {
-      ouro.box {
-        key = "palette", width = 620, surface = "card", padding = 16,
-        children = {
-          ouro.column { key = "content", gap = 10, cross_alignment = "stretch", children = {
-            ouro.text { key = "heading", text = "Search applications", size = 14, foreground = colors.muted },
-            ouro.text_input {
-              key = "search", text = state.query(), autofocus = true, height = 44,
-              on_change = state.change, on_command = state.command,
-            },
-            ouro.column { key = "results", gap = 3, cross_alignment = "stretch", children = rows },
-            ouro.text { key = "status", text = text, size = 12, foreground = foreground, max_lines = 2 },
-          } },
+      ouro.column { key = "content", gap = 12, cross_alignment = "stretch", children = {
+        ouro.row { key = "heading", gap = 8, cross_alignment = "center", children = {
+          ouro.xdg.icon { key = "search-icon", name = "system-search-symbolic", theme = "Adwaita", width = 16, height = 16, tint = colors.muted },
+          ouro.text { key = "title", text = "Search applications", size = 13, foreground = colors.muted },
+        } },
+        ouro.text_input {
+          key = "search", text = state.query(), autofocus = true, height = 46,
+          font_size = 16, padding_x = 14, radius = 7, background = colors.input, border = colors.border,
+          on_change = state.change, on_command = state.command,
         },
-      },
+        ouro.column { key = "results", gap = 4, flex = 1, cross_alignment = "stretch", children = rows },
+        ouro.text { key = "status", text = text, size = 12, foreground = foreground, max_lines = 2 },
+      } },
     },
   }
 end

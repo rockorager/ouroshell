@@ -1,20 +1,56 @@
 #!/usr/bin/env python3
 """Exercise the real shell in a disposable headless Sway, never the live desktop.
 
-Requires sibling Ourokit built, sway, grim, and wtype. Optional
+Requires sibling Ourokit built, sway, grim, wtype, and Pillow. Optional
 OUROSHELL_TEST_ARTIFACTS preserves captures and protocol logs.
 """
 import json
 import os
 from pathlib import Path
 import socket
+import struct
 import subprocess
 import tempfile
 import threading
 import time
+from PIL import Image, ImageChops
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT.parent / "ourokit/zig-out/bin/ouroctl"
+
+
+def virtual_pointer(display):
+    """Keep a pointer device present so Ourokit can bind wl_pointer before clicks.
+
+    Only registry discovery and virtual-pointer creation are needed here;
+    Sway's test IPC supplies motion and button events afterward.
+    """
+    client = socket.socket(socket.AF_UNIX)
+    client.settimeout(8)
+    client.connect(display)
+
+    def request(object_id, opcode, payload):
+        client.sendall(struct.pack("=II", object_id, ((8 + len(payload)) << 16) | opcode) + payload)
+
+    request(1, 1, struct.pack("=I", 2))  # wl_display.get_registry
+    try:
+        with client.makefile("rb") as events:
+            while True:
+                object_id, header = struct.unpack("=II", events.read(8))
+                payload = events.read((header >> 16) - 8)
+                if object_id != 2 or header & 0xffff != 0:
+                    continue
+                name, length = struct.unpack("=II", payload[:8])
+                interface = payload[8:8 + length]
+                if interface != b"zwlr_virtual_pointer_manager_v1\0":
+                    continue
+                encoded = struct.pack("=I", length) + interface + b"\0" * (-length % 4)
+                request(2, 0, struct.pack("=I", name) + encoded + struct.pack("=II", 1, 3))
+                request(3, 0, struct.pack("=II", 0, 4))  # create_virtual_pointer(null seat)
+                return client
+    except BaseException:
+        client.close()
+        raise
 
 
 def wait_for(check, message):
@@ -54,6 +90,14 @@ def main():
             (apps / f"fixture-{index}.desktop").write_text(
                 f"[Desktop Entry]\nType=Application\nName=Fixture App {index}\n"
                 f"Exec=fixture-app-{index} \"argument with spaces\"\nPath=/tmp/fixture work\n")
+        # Reproduce the duplicate key shipped in Arch's Chrome desktop file.
+        (apps / "google-chrome.desktop").write_text(
+            "[Desktop Entry]\nType=Application\nName=Google Chrome\n"
+            "Exec=/usr/bin/google-chrome-stable %U\n"
+            "StartupWMClass=Google-chrome\nStartupWMClass=google-chrome\n")
+        (apps / "com.google.Chrome.desktop").write_text(
+            "[Desktop Entry]\nType=Application\nName=Google Chrome\n"
+            "Exec=hidden-chrome\nNoDisplay=true\n")
         env = dict(os.environ, XDG_RUNTIME_DIR=str(directory), XDG_DATA_HOME=str(data),
                    XDG_DATA_DIRS="/usr/share", WLR_BACKENDS="headless", WLR_HEADLESS_OUTPUTS="1",
                    WLR_RENDERER="pixman", LIBSEAT_BACKEND="noop")
@@ -86,6 +130,7 @@ def main():
         server = threading.Thread(target=compositor_calls)
         server.start()
         shell = None
+        pointer = None
         with (artifacts / "sway.log").open("wb") as sway_log, (artifacts / "shell.log").open("wb") as shell_log:
             compositor = subprocess.Popen(["sway", "-c", str(config), "-d"], env=env, stdout=sway_log, stderr=sway_log)
             try:
@@ -107,6 +152,21 @@ def main():
                     subprocess.run(["wtype", "-s", "200", *arguments, "-s", "100"], env=env, check=True)
                     time.sleep(.15)
 
+                def search_bounds(name):
+                    # The wide blue focus border identifies the input, without
+                    # relying on where the layout places it or its text value.
+                    with Image.open(artifacts / f"{name}.png") as image:
+                        image = image.convert("RGB")
+                        edges = []
+                        for y in range(image.height):
+                            xs = [x for x in range(image.width)
+                                  if (lambda r, g, b: b > 150 and b > r + 20 and b > g + 20)(*image.getpixel((x, y)))]
+                            if len(xs) > 500:
+                                edges.append((min(xs), y, max(xs)))
+                    assert len(edges) == 2, (name, edges)
+                    assert all(left + right == image.width - 1 for left, _, right in edges), (name, edges)
+                    return edges
+
                 time.sleep(.7)
                 baseline = capture("bar")
                 call(endpoint, "launcher.toggle")
@@ -118,6 +178,16 @@ def main():
                 for _ in range(8):
                     keys("-k", "Down")
                 capture("scrolled-selection")
+                keys("-k", "Up")
+                capture("selection-up")
+                # The upper five rows must not move when selection moves from
+                # the last visible row to the preceding visible row.
+                input_bottom = search_bounds("scrolled-selection")[-1][1]
+                with Image.open(artifacts / "scrolled-selection.png") as before, Image.open(artifacts / "selection-up.png") as after:
+                    upper_rows = (330, input_bottom + 12, 950, input_bottom + 12 + 5 * 48)
+                    assert before.crop(upper_rows).tobytes() == after.crop(upper_rows).tobytes(), "Up scrolled rows that were already visible"
+                    assert before.crop((330, input_bottom + 12 + 5 * 48, 950, input_bottom + 12 + 7 * 48)).tobytes() != after.crop((330, input_bottom + 12 + 5 * 48, 950, input_bottom + 12 + 7 * 48)).tobytes(), "Up did not move the selection highlight"
+                keys("-k", "Down")
                 keys("-k", "Return")
                 wait_for(lambda: launches, "Enter did not launch the selected app")
                 assert launches[0]["name"] == "run", launches
@@ -145,14 +215,46 @@ def main():
                 keys("-k", "Return")
                 wait_for(lambda: len(launches) == 3, "error fixture did not run")
                 capture("launch-error")
+                keys("-M", "ctrl", "a", "-m", "ctrl", "Google Chrome")
+                capture("chrome")
+                keys("-k", "Return")
+                wait_for(lambda: len(launches) == 4, "Chrome was not discovered or searchable")
+                assert launches[3]["arguments"]["argv"] == ["/usr/bin/google-chrome-stable"], launches
+                expected_bounds = search_bounds("launcher")
+                for state in ("launcher", "search", "scrolled-selection", "selection-up", "empty", "reopened", "launch-error", "chrome"):
+                    assert search_bounds(state) == expected_bounds, f"search field moved in {state}"
+                    with Image.open(artifacts / "bar.png") as bar, Image.open(artifacts / f"{state}.png") as image:
+                        # Exclude the clock; the launcher must be one compact,
+                        # centered surface, with no larger painted container.
+                        bounds = ImageChops.difference(bar.convert("RGB"), image.convert("RGB")).crop((0, 40, 1280, 800)).getbbox()
+                        assert bounds is not None
+                        left, top, right, bottom = bounds
+                        assert (right - left, bottom - top) == (620, 480), (state, bounds)
+                        assert left + right == 1280 and top + bottom == 760, (state, bounds)
+                # Click unused space at the far right of a result row, not its
+                # text, to verify the entire custom-content button activates.
+                time.sleep(.2)
+                call(endpoint, "launcher.toggle")
+                keys("-M", "ctrl", "a", "-m", "ctrl", "Fixture App 4")
+                sway_socket = next(directory.glob("sway-ipc.*.sock"))
+                _, bottom, right = expected_bounds[-1]
+                pointer = virtual_pointer(env["WAYLAND_DISPLAY"])
+                time.sleep(.2)
+                for command in (f"cursor set {right - 15} {bottom + 34}", "cursor press button1", "cursor release button1"):
+                    subprocess.run(["swaymsg", "-s", str(sway_socket), f"seat seat0 {command}"], env=env, check=True, capture_output=True)
+                    time.sleep(.1)
+                wait_for(lambda: len(launches) == 5, "clicking row background did not launch")
+                assert launches[4]["arguments"]["argv"][-2] == "fixture-app-4", launches
                 assert (artifacts / "sway.log").read_text().count("new layer surface: namespace ouroshell-panel ") == 1
                 shell.terminate()
                 # Ourokit drains on SIGTERM and returns 128 + SIGTERM.
                 assert shell.wait(timeout=10) == 143, (artifacts / "shell.log").read_text()
                 assert not endpoint.exists(), "control socket survived graceful shutdown"
-                print("PASS: native discovery, search, selection beyond first page, argv/cwd, Escape, rapid toggles, refocus, clean exit")
+                print("PASS: native discovery, Chrome, fixed search position, selection beyond first page, argv/cwd, Escape, rapid toggles, refocus, clean exit")
                 print(f"Captures: {artifacts}")
             finally:
+                if pointer:
+                    pointer.close()
                 if shell and shell.poll() is None:
                     shell.terminate()
                     shell.wait(timeout=10)

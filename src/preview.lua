@@ -53,7 +53,7 @@ return ouro.app {
     }
     windows[#windows + 1] = ouro.layer_surface {
       id = "launcher", namespace = "ouroshell-preview-launcher", layer = "overlay",
-      width = 720, height = 560, anchors = {}, keyboard_interactivity = "exclusive",
+      width = 620, height = 480, anchors = {}, keyboard_interactivity = "exclusive",
       content = function() return launcher.content(launcher_state) end,
     }
     return { windows = windows }

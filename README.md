@@ -108,7 +108,8 @@ interactive:
 ../ourokit/zig-out/bin/ouroctl run src/preview.lua --software
 ```
 
-Run the native integration test with `sway`, `grim`, and `wtype` installed:
+Run the native integration test with `sway`, `grim`, `wtype`, and Python's
+Pillow package installed:
 
 ```sh
 python3 tests/native_launcher.py
