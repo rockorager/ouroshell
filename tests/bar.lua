@@ -1,6 +1,6 @@
 package.path = "src/?.lua;" .. package.path
 local ouro = {}
-for _, kind in ipairs({ "box", "row", "scroll", "text", "button", "app", "layer_surface" }) do
+for _, kind in ipairs({ "box", "row", "column", "scroll", "text", "button", "text_input", "icon", "app", "layer_surface" }) do
   ouro[kind] = function(props) props.kind = kind; return props end
 end
 package.loaded.ouro = ouro
@@ -86,20 +86,36 @@ ouro.signal = function(value)
     __call = function() return value end,
   })
 end
-ouro.spawn = function(fn) assert(spawned == nil); spawned = coroutine.create(fn) end
+ouro.json = { null = {} }
+ouro.xdg = { runtime_dir = "/run/user/42", icon = ouro.icon, applications = {
+  list = function() return {} end,
+  prepare_launch = function() return {} end,
+} }
+ouro.mcp = { call = function() return { result = {} } end }
+ouro.spawn = function(fn)
+  local task = coroutine.create(fn)
+  assert(coroutine.resume(task))
+  if coroutine.status(task) == "suspended" then assert(spawned == nil); spawned = task end
+end
 ouro.sleep = function(ms) delay = ms; coroutine.yield() end
 ouro.shell = { workspaces = { connect = function() return function() return state end end } }
 local app = dofile("src/application.lua")
-local panel = app.run().windows[1]
+local running = app.run()
+local windows = running.windows()
+local panel = windows[1]
 assert(panel.height == 40 and panel.exclusive_zone == 40)
 assert(panel.outputs == "all" and panel.output == nil)
 assert(workspace_items(panel.content("DP-1"))[1].text == "No workspaces",
   "application did not pass the native output name to the bar")
 assert(panel.content().children[1].children[2].text == "minute 1")
-assert(coroutine.resume(spawned))
 assert(delay == 1000, "clock did not align with the next minute")
 now = 120
 assert(coroutine.resume(spawned))
 assert(delay == 60000)
 assert(panel.content().children[1].children[2].text == "minute 2")
+assert(app.actions["launcher.toggle"].inputSchema.type == "object")
+app.actions["launcher.toggle"].handler()
+assert(#running.windows() == 2 and running.windows()[2].id == "launcher")
+app.actions["launcher.toggle"].handler()
+assert(#running.windows() == 1)
 print("PASS: workspace ordering, visibility, activation, states, and minute-aligned clock")

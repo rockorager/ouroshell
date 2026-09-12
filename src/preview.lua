@@ -1,5 +1,6 @@
 local ouro = require("ouro")
 local bar = require("bar")
+local launcher = require("launcher")
 local selected = ouro.signal("2")
 local time = "Thu Sep 10  04:32 PM"
 
@@ -40,6 +41,21 @@ return ouro.app {
         content = case.content,
       }
     end
+    local launcher_state = launcher.new {
+      phase = "ready",
+      dismiss = function() end,
+      entries = {
+        { id = "org.gnome.Nautilus.desktop", name = "Files", icon = "system-file-manager", exec = "nautilus", visible = true },
+        { id = "dev.rockorager.monstar.desktop", name = "Monstar", icon = "utilities-terminal", exec = "monstar", visible = true },
+        { id = "org.mozilla.firefox.desktop", name = "Firefox", icon = "firefox", exec = "firefox", visible = true },
+        { id = "org.gnome.Settings.desktop", name = "Settings", icon = "org.gnome.Settings", exec = "gnome-control-center", visible = true },
+      },
+    }
+    windows[#windows + 1] = ouro.layer_surface {
+      id = "launcher", namespace = "ouroshell-preview-launcher", layer = "overlay",
+      width = 720, height = 560, anchors = {}, keyboard_interactivity = "exclusive",
+      content = function() return launcher.content(launcher_state) end,
+    }
     return { windows = windows }
   end,
 }
