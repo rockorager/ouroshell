@@ -1,5 +1,6 @@
 package.path = "src/?.lua;" .. package.path
-local ouro = {}
+-- A non-default value detects literals instead of references to the catalog.
+local ouro = { tokens = { foundation = { typography_3 = 23 } } }
 for _, kind in ipairs({ "box", "row", "column", "scroll", "text", "button", "text_input", "icon", "app", "layer_surface" }) do
   ouro[kind] = function(props) props.kind = kind; return props end
 end
@@ -24,6 +25,7 @@ local items = workspace_items(tree)
 assert(#items == 5)
 for index, name in ipairs({ "1", "2:code", "2:mail", "10", "chat" }) do
   assert(items[index].label == name)
+  assert(items[index].font_size == 23, "workspace buttons must use typography_3")
 end
 assert(state.workspaces[1].name == "10", "sorting mutated the protocol snapshot")
 assert(items[4].key == "workspace-id:1:ten")
@@ -34,6 +36,7 @@ assert(not items[5].enabled and items[5].on_press == nil)
 assert(items[2].background ~= items[1].background)
 assert(items[3].foreground ~= items[1].foreground)
 assert(tree.children[1].children[2].text == "Thu Sep 10  04:32 PM")
+assert(tree.children[1].children[2].size == 23, "clock must use typography_3")
 assert(tree.children[1].children[1].axis == "horizontal")
 
 assert(workspace_items(bar.content({ available = false, workspaces = state.workspaces }, "time"))[1].text
