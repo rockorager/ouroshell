@@ -3,6 +3,13 @@ local bar = require("bar")
 local launcher = require("launcher")
 local selected = ouro.signal("2")
 local time = "Thu Sep 10  04:32 PM"
+local visible = ouro.signal(true)
+local launcher_state
+
+local function toggle()
+  if not visible() then launcher_state.open() end
+  visible:set(not visible())
+end
 
 local function workspace_content()
   local workspaces = {}
@@ -13,49 +20,44 @@ local function workspace_content()
       activate = function() selected:set(name) end,
     }
   end
-  return bar.content({ available = true, workspaces = workspaces }, time)
+  return bar.content({ available = true, workspaces = workspaces }, time, nil, toggle)
 end
 
 return ouro.app {
   id = "dev.ouro.shell.preview",
   theme = { color_scheme = "dark" },
   run = function()
-    local cases = {
-      { name = "workspaces", content = workspace_content },
-      { name = "narrow", width = 280, content = workspace_content },
-      { name = "unavailable", content = function()
-        return bar.content({ available = false, workspaces = {} }, time)
-      end },
-      { name = "empty", content = function()
-        return bar.content({ available = true, workspaces = {} }, time)
-      end },
-    }
-    local windows = {}
-    for index, case in ipairs(cases) do
-      windows[#windows + 1] = ouro.layer_surface {
-        id = case.name, namespace = "ouroshell-preview", layer = "top",
-        width = case.width or 0, height = bar.height,
-        anchors = case.width and { "top", "left" } or { "top", "left", "right" },
-        margins = { top = (index - 1) * 48 },
-        keyboard_interactivity = "none",
-        content = case.content,
-      }
-    end
-    local launcher_state = launcher.new {
+    launcher_state = launcher.new {
       phase = "ready",
-      dismiss = function() end,
+      dismiss = function() visible:set(false) end,
+      prepare_launch = function(entry) return { argv = { entry.exec } } end,
+      -- Preview is deliberately incapable of executing apps or session actions.
+      call = function() return { result = { isError = true, structuredContent = {
+        error = { message = "Preview only — no command was executed" },
+      } } } end,
       entries = {
-        { id = "org.gnome.Nautilus.desktop", name = "Files", icon = "system-file-manager", exec = "nautilus", visible = true },
-        { id = "dev.rockorager.monstar.desktop", name = "Monstar", icon = "utilities-terminal", exec = "monstar", visible = true },
-        { id = "org.mozilla.firefox.desktop", name = "Firefox", icon = "firefox", exec = "firefox", visible = true },
+        { id = "org.gnome.Nautilus.desktop", name = "Files", generic_name = "File manager", icon = "system-file-manager", exec = "nautilus", visible = true },
+        { id = "dev.rockorager.monstar.desktop", name = "Monstar", generic_name = "Terminal", icon = "utilities-terminal", exec = "monstar", visible = true },
+        { id = "org.mozilla.firefox.desktop", name = "Firefox", generic_name = "Web browser", icon = "web-browser", exec = "firefox", visible = true },
         { id = "org.gnome.Settings.desktop", name = "Settings", icon = "org.gnome.Settings", exec = "gnome-control-center", visible = true },
       },
     }
-    windows[#windows + 1] = ouro.layer_surface {
-      id = "launcher", namespace = "ouroshell-preview-launcher", layer = "overlay",
-      width = 620, height = 480, anchors = {}, keyboard_interactivity = "exclusive",
-      content = function() return launcher.content(launcher_state) end,
+    local panel = ouro.layer_surface {
+      id = "panel", namespace = "ouroshell-preview", layer = "top",
+      width = 0, height = bar.height, anchors = { "top", "left", "right" },
+      exclusive_zone = bar.height, keyboard_interactivity = "none", content = workspace_content,
     }
-    return { windows = windows }
+    return { windows = function()
+      local windows = { panel }
+      if visible() then
+        windows[#windows + 1] = ouro.layer_surface {
+          id = "launcher", namespace = "ouroshell-preview-launcher", layer = "overlay",
+          width = 0, height = 0, anchors = { "top", "bottom", "left", "right" },
+          background = launcher.background, background_effect = "blur", keyboard_interactivity = "exclusive",
+          content = function(_, height) return launcher.content(launcher_state, height) end,
+        }
+      end
+      return windows
+    end }
   end,
 }

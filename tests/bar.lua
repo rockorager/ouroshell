@@ -8,7 +8,7 @@ package.loaded.ouro = ouro
 local bar = require("bar")
 
 local function workspace_items(tree)
-  return tree.children[1].children[1].children[1].children
+  return tree.children[1].children[2].children[1].children
 end
 
 local activated
@@ -33,11 +33,11 @@ items[4].on_press()
 assert(activated == "ten", "click activated the wrong workspace")
 assert(items[2].on_press == nil, "active workspace should not reactivate")
 assert(not items[5].enabled and items[5].on_press == nil)
-assert(items[2].background ~= items[1].background)
+assert(items[2].children[1].children[2].background ~= items[1].children[1].children[2].background)
 assert(items[3].foreground ~= items[1].foreground)
-assert(tree.children[1].children[2].text == "Thu Sep 10  04:32 PM")
-assert(tree.children[1].children[2].size == 23, "clock must use typography_3")
-assert(tree.children[1].children[1].axis == "horizontal")
+assert(tree.children[1].children[3].text == "Thu Sep 10  04:32 PM")
+assert(tree.children[1].children[3].size == 23, "clock must use typography_3")
+assert(tree.children[1].children[2].axis == "horizontal")
 
 assert(workspace_items(bar.content({ available = false, workspaces = state.workspaces }, "time"))[1].text
   == "Workspaces unavailable")
@@ -110,14 +110,14 @@ assert(panel.height == 40 and panel.exclusive_zone == 40)
 assert(panel.outputs == "all" and panel.output == nil)
 assert(workspace_items(panel.content("DP-1"))[1].text == "No workspaces",
   "application did not pass the native output name to the bar")
-assert(panel.content().children[1].children[2].text == "minute 1")
+assert(panel.content().children[1].children[3].text == "minute 1")
 assert(delay == 1000, "clock did not align with the next minute")
 now = 120
 assert(coroutine.resume(spawned))
 assert(delay == 60000)
-assert(panel.content().children[1].children[2].text == "minute 2")
+assert(panel.content().children[1].children[3].text == "minute 2")
 assert(app.actions["launcher.toggle"].inputSchema.type == "object")
-app.actions["launcher.toggle"].handler()
+panel.content().children[1].children[1].on_press()
 assert(#running.windows() == 2 and running.windows()[2].id == "launcher")
 app.actions["launcher.toggle"].handler()
 assert(#running.windows() == 1)

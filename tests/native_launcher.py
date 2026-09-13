@@ -73,6 +73,9 @@ def call(path, name, allow_error=False):
         client.sendall(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}).encode() + b"\n")
         reply = json.loads(client.makefile("rb").readline())
         assert "error" not in reply and (allow_error or not reply["result"].get("isError")), reply
+        if name == "launcher.toggle":
+            # The action reply precedes native surface creation and autofocus.
+            time.sleep(1.2)
         return reply["result"]
 
 
@@ -82,7 +85,7 @@ def main():
         artifacts = Path(os.environ.get("OUROSHELL_TEST_ARTIFACTS", directory / "artifacts"))
         artifacts.mkdir(parents=True, exist_ok=True)
         config = directory / "sway.conf"
-        config.write_text("output * mode 1280x800\noutput * bg #101216 solid_color\nseat seat0 fallback true\n")
+        config.write_text("output * mode 1280x800\noutput * bg #608099 solid_color\nseat seat0 fallback true\n")
         data = directory / "data"
         apps = data / "applications"
         apps.mkdir(parents=True)
@@ -131,18 +134,25 @@ def main():
         server.start()
         shell = None
         pointer = None
+        keyboard = None
         with (artifacts / "sway.log").open("wb") as sway_log, (artifacts / "shell.log").open("wb") as shell_log:
             compositor = subprocess.Popen(["sway", "-c", str(config), "-d"], env=env, stdout=sway_log, stderr=sway_log)
             try:
                 wait_for(lambda: list(directory.glob("wayland-*.lock")), "headless compositor did not start")
                 env["WAYLAND_DISPLAY"] = str(next(directory.glob("wayland-*.lock")))[:-5]
+                # A headless seat otherwise loses keyboard capability between
+                # wtype invocations. Keep a device present like a real desktop.
+                keyboard = subprocess.Popen(["wtype", "-s", "600000"], env=env)
+                time.sleep(.2)
                 shell = subprocess.Popen([str(BINARY), "run", str(ROOT / "ouro.json"), "--software"],
                                          env=env, stdout=shell_log, stderr=shell_log)
                 endpoint = directory / "ourokit/apps/dev.ouro.shell"
                 wait_for(endpoint.exists, "shell MCP socket did not appear")
 
                 def capture(name):
-                    time.sleep(.2)
+                    # Fullscreen software compositing is slower than the small
+                    # popup; allow queued input, icon loads, and paint to settle.
+                    time.sleep(1.2)
                     assert shell.poll() is None, (artifacts / "shell.log").read_text()
                     path = artifacts / f"{name}.png"
                     subprocess.run(["grim", "-o", "HEADLESS-1", str(path)], env=env, check=True)
@@ -150,22 +160,12 @@ def main():
 
                 def keys(*arguments):
                     subprocess.run(["wtype", "-s", "200", *arguments, "-s", "100"], env=env, check=True)
-                    time.sleep(.15)
+                    time.sleep(1.5)
 
-                def search_bounds(name):
-                    # The wide blue focus border identifies the input, without
-                    # relying on where the layout places it or its text value.
-                    with Image.open(artifacts / f"{name}.png") as image:
-                        image = image.convert("RGB")
-                        edges = []
-                        for y in range(image.height):
-                            xs = [x for x in range(image.width)
-                                  if (lambda r, g, b: b > 150 and b > r + 20 and b > g + 20)(*image.getpixel((x, y)))]
-                            if len(xs) > 500:
-                                edges.append((min(xs), y, max(xs)))
-                    assert len(edges) == 2, (name, edges)
-                    assert all(left + right == image.width - 1 for left, _, right in edges), (name, edges)
-                    return edges
+                # Geometry specified by the design: 560×620 column centered in
+                # the 1280×760 area below the bar; 54px search + 16px gaps.
+                left, top, right = 360, 110, 920
+                first_row = top + 54 + 16 + 39 + 16 + 17 + 5
 
                 time.sleep(.7)
                 baseline = capture("bar")
@@ -182,11 +182,11 @@ def main():
                 capture("selection-up")
                 # The upper five rows must not move when selection moves from
                 # the last visible row to the preceding visible row.
-                input_bottom = search_bounds("scrolled-selection")[-1][1]
                 with Image.open(artifacts / "scrolled-selection.png") as before, Image.open(artifacts / "selection-up.png") as after:
-                    upper_rows = (330, input_bottom + 12, 950, input_bottom + 12 + 5 * 48)
+                    upper_rows = (left, first_row, right, first_row + 5 * 61)
                     assert before.crop(upper_rows).tobytes() == after.crop(upper_rows).tobytes(), "Up scrolled rows that were already visible"
-                    assert before.crop((330, input_bottom + 12 + 5 * 48, 950, input_bottom + 12 + 7 * 48)).tobytes() != after.crop((330, input_bottom + 12 + 5 * 48, 950, input_bottom + 12 + 7 * 48)).tobytes(), "Up did not move the selection highlight"
+                    lower_rows = (left, first_row + 5 * 61, right, first_row + 7 * 61)
+                    assert before.crop(lower_rows).tobytes() != after.crop(lower_rows).tobytes(), "Up did not move the selection highlight"
                 keys("-k", "Down")
                 keys("-k", "Return")
                 wait_for(lambda: launches, "Enter did not launch the selected app")
@@ -212,6 +212,7 @@ def main():
                 assert launches[1]["arguments"]["argv"][-2] == "fixture-app-2", launches
                 time.sleep(.2)
                 call(endpoint, "launcher.toggle")
+                keys("Fixture App 2")
                 keys("-k", "Return")
                 wait_for(lambda: len(launches) == 3, "error fixture did not run")
                 capture("launch-error")
@@ -220,44 +221,97 @@ def main():
                 keys("-k", "Return")
                 wait_for(lambda: len(launches) == 4, "Chrome was not discovered or searchable")
                 assert launches[3]["arguments"]["argv"] == ["/usr/bin/google-chrome-stable"], launches
-                expected_bounds = search_bounds("launcher")
                 for state in ("launcher", "search", "scrolled-selection", "selection-up", "empty", "reopened", "launch-error", "chrome"):
-                    assert search_bounds(state) == expected_bounds, f"search field moved in {state}"
                     with Image.open(artifacts / "bar.png") as bar, Image.open(artifacts / f"{state}.png") as image:
-                        # Exclude the clock; the launcher must be one compact,
-                        # centered surface, with no larger painted container.
+                        # Full-area tint stops exactly below the bar. Exclude
+                        # the live clock when comparing the bar itself.
+                        assert bar.crop((0, 0, 1000, 40)).tobytes() == image.crop((0, 0, 1000, 40)).tobytes(), "launcher covered the bar"
                         bounds = ImageChops.difference(bar.convert("RGB"), image.convert("RGB")).crop((0, 40, 1280, 800)).getbbox()
-                        assert bounds is not None
-                        left, top, right, bottom = bounds
-                        assert (right - left, bottom - top) == (620, 480), (state, bounds)
-                        assert left + right == 1280 and top + bottom == 760, (state, bounds)
+                        assert bounds == (0, 0, 1280, 760), (state, bounds)
+                        assert sum(image.getpixel((940, 400))[:3]) < sum(image.getpixel((20, 400))[:3]), "missing center-to-edge fade"
+                    with Image.open(artifacts / "launcher.png") as original, Image.open(artifacts / f"{state}.png") as image:
+                        # Compare only the pill's top border, not query or caret.
+                        border = (left + 40, top, right - 40, top + 2)
+                        assert original.crop(border).tobytes() == image.crop(border).tobytes(), f"search moved in {state}"
                 # Click unused space at the far right of a result row, not its
                 # text, to verify the entire custom-content button activates.
                 time.sleep(.2)
                 call(endpoint, "launcher.toggle")
                 keys("-M", "ctrl", "a", "-m", "ctrl", "Fixture App 4")
                 sway_socket = next(directory.glob("sway-ipc.*.sock"))
-                _, bottom, right = expected_bounds[-1]
                 pointer = virtual_pointer(env["WAYLAND_DISPLAY"])
                 time.sleep(.2)
-                for command in (f"cursor set {right - 15} {bottom + 34}", "cursor press button1", "cursor release button1"):
+                for command in (f"cursor set {right - 15} {first_row + 28}", "cursor press button1", "cursor release button1"):
                     subprocess.run(["swaymsg", "-s", str(sway_socket), f"seat seat0 {command}"], env=env, check=True, capture_output=True)
                     time.sleep(.1)
                 wait_for(lambda: len(launches) == 5, "clicking row background did not launch")
                 assert launches[4]["arguments"]["argv"][-2] == "fixture-app-4", launches
+
+                # The fake endpoint records requests; it never executes these.
+                for query, tool, argv in (("reboot", "run", ["systemctl", "reboot"]),
+                                          ("shutdown", "run", ["systemctl", "poweroff"]),
+                                          ("logout", "exit", None)):
+                    count = len(launches)
+                    call(endpoint, "launcher.toggle")
+                    keys(query, "-k", "Return")
+                    capture(f"confirm-{query}")
+                    assert len(launches) == count, "search submission bypassed confirmation"
+                    keys("-k", "Return")
+                    assert len(launches) == count, "confirmation default was destructive"
+                    keys("-k", "Return", "-k", "Down", "-k", "Return")
+                    wait_for(lambda: len(launches) == count + 1, "confirmed action did not send")
+                    assert launches[-1]["name"] == tool, launches[-1]
+                    assert launches[-1]["arguments"] == ({"argv": argv} if argv else {}), launches[-1]
+
+                call(endpoint, "launcher.toggle")
+                keys("no-such-application")
+                subprocess.run(["swaymsg", "-s", str(sway_socket), "output HEADLESS-1 mode 640x480"], check=True, capture_output=True)
+                capture("narrow-empty")
+                keys("-M", "ctrl", "a", "-m", "ctrl", "Fixture")
+                for _ in range(8):
+                    keys("-k", "Down")
+                capture("narrow-selection")
+                keys("-k", "Return")
+                wait_for(lambda: len(launches) == 9, "short output lost keyboard selection")
+                assert launches[-1]["arguments"]["argv"][-2] == "fixture-app-8"
                 assert (artifacts / "sway.log").read_text().count("new layer surface: namespace ouroshell-panel ") == 1
                 shell.terminate()
                 # Ourokit drains on SIGTERM and returns 128 + SIGTERM.
                 assert shell.wait(timeout=10) == 143, (artifacts / "shell.log").read_text()
                 assert not endpoint.exists(), "control socket survived graceful shutdown"
-                print("PASS: native discovery, Chrome, fixed search position, selection beyond first page, argv/cwd, Escape, rapid toggles, refocus, clean exit")
+
+                # Render the safe visual fixture too: active/urgent workspaces,
+                # real themed application icons, and the session menu state.
+                subprocess.run(["swaymsg", "-s", str(sway_socket), "output HEADLESS-1 mode 1280x800"], check=True, capture_output=True)
+                shell = subprocess.Popen([str(BINARY), "run", str(ROOT / "src/preview.lua"), "--software"],
+                                         env=env, stdout=shell_log, stderr=shell_log)
+                time.sleep(1)
+                capture("preview")
+                keys("-k", "Down", "-k", "Down", "-k", "Down", "-k", "Down", "-k", "Return")
+                capture("preview-session")
+                keys("-k", "Down", "-k", "Return")
+                capture("preview-confirmation")
+                keys("-k", "Down", "-k", "Return")
+                capture("preview-error")
+                keys("-k", "Escape", "-k", "Escape")
+                # Return home after the asynchronous themed icons have loaded.
+                capture("preview")
+                assert len(launches) == 9, "preview sent a real request"
+                print("PASS: native search, full-area tint/fade, uncovered bar, paging, argv/cwd, confirmations, Escape, resize, refocus, clean exit")
                 print(f"Captures: {artifacts}")
             finally:
                 if pointer:
                     pointer.close()
                 if shell and shell.poll() is None:
                     shell.terminate()
-                    shell.wait(timeout=10)
+                    try:
+                        shell.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        shell.kill()
+                        shell.wait(timeout=10)
+                if keyboard:
+                    keyboard.terminate()
+                    keyboard.wait(timeout=10)
                 compositor.terminate()
                 compositor.wait(timeout=10)
                 stopping.set()

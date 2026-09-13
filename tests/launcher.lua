@@ -2,7 +2,7 @@ package.path = "src/?.lua;" .. package.path
 
 local tasks = {}
 local ouro = { json = { null = {} }, xdg = { runtime_dir = "/run/user/42", applications = {} }, mcp = {} }
-for _, kind in ipairs({ "box", "row", "column", "text", "button", "text_input", "icon", "layer_surface", "app" }) do
+for _, kind in ipairs({ "box", "row", "column", "scroll", "stack", "image", "text", "button", "text_input", "icon", "layer_surface", "app" }) do
   ouro[kind] = function(props) props.kind = kind; return props end
 end
 ouro.xdg.icon = ouro.icon
@@ -42,6 +42,7 @@ local state = launcher.new {
     call = { address, tool, arguments }; return { result = { isError = false } }
   end,
 }
+state.choose_scope("apps")
 state.command("next"); assert(state.selected() == 2)
 state.command("next"); assert(state.selected() == 1)
 state.change("code"); assert(state.selected() == 1 and #state.results() == 1)
@@ -51,21 +52,33 @@ assert(call[1] == "unix:/run/user/42/ouro.mcp.sock" and call[2] == "run")
 assert(call[3].argv[1] == "code" and dismissed)
 dismissed = false; state.command("cancel"); assert(dismissed)
 
+local function find(tree, key)
+  if tree.key == key then return tree end
+  for _, child in ipairs(tree.children or {}) do
+    local found = find(child, key)
+    if found then return found end
+  end
+end
 local tree = launcher.content(state)
-assert(tree.width == "fill" and tree.height == "fill" and tree.padding == 12)
-local palette = tree.children[1]
-assert(palette.children[3].flex == 1)
-assert(palette.children[2].autofocus and palette.children[2].on_command == state.command)
-assert(palette.children[3].children[1].background ~= "#00000000")
+assert(tree.kind == "stack" and tree.children[1].key == "vignette")
+assert(find(tree, "vignette").width == "fill" and find(tree, "vignette").height == "fill")
+assert(find(tree, "position").width == "fill" and find(tree, "position").height == "fill")
+assert(find(tree, "palette").background == nil and find(tree, "palette").surface == nil)
+assert(find(tree, "results-scroll").flex == 1)
+local input = find(tree, "search-" .. state.input_generation())
+assert(input.autofocus and type(input.on_command) == "function")
+input.on_command("next"); assert(state.selected() == 1)
+assert(input.placeholder == "Search apps and commands…" and input.label == "Search apps and commands")
+assert(find(tree, "application-code.desktop").background ~= "#00000000")
 assert(#launcher.search({ {id="x", name="Other", generic_name=ouro.json.null, exec="x"} }, "absent") == 0)
 local many = {}
 for index = 1, 10 do many[index] = {id=tostring(index), name=string.format("App %02d", index), exec="app"} end
 state.entries:set(many); state.change("")
 for _ = 1, 8 do state.command("next") end
 assert(state.selected() == 9 and state.first() == 3)
-local rows = launcher.content(state).children[1].children[3].children
-assert(#rows == 7 and rows[7].key == "application-9")
-assert(rows[7].background ~= "#00000000")
+local rows = find(launcher.content(state), "results").children
+assert(#rows == 8 and rows[8].key == "application-9")
+assert(rows[8].background ~= "#00000000")
 state.command("previous")
 assert(state.selected() == 8 and state.first() == 3)
 for _ = 1, 5 do state.command("previous") end
@@ -81,6 +94,61 @@ assert(state.selected() == 1 and state.first() == 1 and #state.results() == 1)
 state.change("missing"); state.command("previous")
 assert(state.selected() == 1 and state.first() == 1 and #state.results() == 0)
 
+state.change("App")
+local short_input = find(launcher.content(state, 440), "search-" .. state.input_generation())
+for _ = 1, 8 do short_input.on_command("next") end
+assert(state.selected() == 9 and state.first() == 7)
+local short_rows = find(launcher.content(state, 440), "results").children
+assert(#short_rows == 4 and short_rows[4].key == "application-9", "short output hid the selection")
+
+-- Empty All is compact; Apps keeps every application; system search is explicit.
+state.open()
+assert(#state.results() == 5 and state.results()[4].id == "lock" and state.results()[5].id == "session")
+state.choose_scope("apps"); assert(#state.results() == 10)
+state.change("reboot"); assert(#state.results() == 0)
+state.choose_scope("system"); assert(#state.results() == 2)
+state.command("next"); state.command("submit")
+assert(state.page() == "session" and #state.results() == 3)
+state.command("cancel"); assert(state.page() == nil and state.scope() == "system")
+
+-- Merely finding or opening a destructive action must never submit it.
+local before = #tasks
+state.change("reboot")
+assert(#state.results() == 1 and state.results()[1].id == "restart")
+state.command("submit")
+assert(state.confirming().id == "restart" and state.selected() == 1 and #tasks == before)
+tree = launcher.content(state)
+assert(find(tree, "cancel").background ~= "#00000000")
+assert(find(tree, "search-" .. state.input_generation()).read_only)
+state.command("submit") -- Enter defaults to Cancel.
+assert(not state.confirming() and #tasks == before)
+state.command("submit"); state.command("next"); state.command("submit")
+assert(#tasks == before + 1)
+state.command("submit"); assert(#tasks == before + 1, "duplicate activation while request is pending")
+tasks[#tasks]()
+assert(call[2] == "run" and table.concat(call[3].argv, "|") == "systemctl|reboot")
+
+for _, case in ipairs({ { "shutdown", "run", "systemctl|poweroff" }, { "logout", "exit" } }) do
+  state.open(); state.change(case[1]); state.command("submit")
+  assert(state.confirming() and #tasks == before + 1)
+  state.command("next"); state.command("submit"); tasks[#tasks]()
+  before = #tasks - 1
+  assert(call[2] == case[2])
+  if case[3] then assert(table.concat(call[3].argv, "|") == case[3]) else assert(next(call[3]) == nil) end
+end
+state.open(); state.change("lock"); state.command("submit"); tasks[#tasks]()
+assert(table.concat(call[3].argv, "|") == "loginctl|lock-session|auto")
+state.open(); state.change("restart"); state.command("submit"); state.open()
+assert(not state.confirming() and state.query() == "" and state.scope() == "all")
+
+-- An app catalog failure cannot remove the shell's system actions.
+local failed = launcher.new { dismiss = function() end, list = function() error("offline") end,
+  call = function() return { result = { isError = true, structuredContent = { error = { message = "denied" } } } } end }
+failed.load(); tasks[#tasks]()
+assert(failed.phase() == "error" and #failed.results() == 2)
+failed.change("lock"); failed.command("submit"); tasks[#tasks]()
+assert(not failed.launching() and failed.message():find("denied", 1, true))
+
 ouro.date = function() return "12:00" end
 ouro.time = function() return 0 end
 ouro.shell = { workspaces = { connect = function() return function() return {available=false} end end } }
@@ -90,6 +158,9 @@ assert(#windows() == 1 and windows()[1].id == "panel")
 app.actions["launcher.toggle"].handler()
 assert(#windows() == 2 and windows()[2].id == "launcher")
 assert(windows()[2].keyboard_interactivity == "exclusive")
+assert(windows()[2].width == 0 and windows()[2].height == 0 and #windows()[2].anchors == 4)
+assert(windows()[2].exclusive_zone == 0 and windows()[2].background_effect == "blur")
+assert(windows()[2].background == launcher.background)
 app.actions["launcher.toggle"].handler()
 assert(#windows() == 1 and windows()[1].id == "panel")
-print("PASS: launcher search, selection, commands, argv policy, MCP call, and widget states")
+print("PASS: launcher search, scope navigation, safe confirmations, fixed argv, failure states, and full-screen composition")

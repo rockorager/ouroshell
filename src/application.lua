@@ -8,6 +8,7 @@ local launcher_state
 
 local function dismiss_launcher() launcher_visible:set(false) end
 local function toggle_launcher()
+  if not launcher_visible() and launcher_state then launcher_state.open() end
   launcher_visible:set(not launcher_visible())
   return {}
 end
@@ -45,10 +46,9 @@ return ouro.app {
         height = bar.height,
         anchors = { "top", "left", "right" },
         exclusive_zone = bar.height,
-        exclusive_edge = "top",
         keyboard_interactivity = "none",
         content = function(output)
-          return bar.content(workspaces(), clock(), output)
+          return bar.content(workspaces(), clock(), output, toggle_launcher)
         end,
     }
     return { windows = function()
@@ -56,9 +56,10 @@ return ouro.app {
       if launcher_visible() then
         windows[#windows + 1] = ouro.layer_surface {
           id = "launcher", namespace = "ouroshell-launcher", layer = "overlay",
-          width = 620, height = 480, anchors = {}, exclusive_zone = 0,
+          width = 0, height = 0, anchors = { "top", "bottom", "left", "right" }, exclusive_zone = 0,
+          background = launcher.background, background_effect = "blur",
           keyboard_interactivity = "exclusive",
-          content = function() return launcher.content(launcher_state) end,
+          content = function(_, height) return launcher.content(launcher_state, height) end,
         }
       end
       return windows

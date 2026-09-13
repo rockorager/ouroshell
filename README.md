@@ -6,21 +6,24 @@ Ouroshell is a Lua desktop shell built on the
 The shell provides a 40px top bar on every output, with that output's clickable
 workspaces on the left and local date/time on the right. Workspace names sort
 by their leading number, then alphabetically; hidden workspaces are omitted.
-Active workspaces have a blue background and urgent workspaces use red text.
+Active workspaces have a pale-blue underline and urgent workspaces use red text.
 The workspace list scrolls horizontally when space is tight, leaving room for
-the clock.
+the clock. The round button at the left opens the global launcher.
 
 The clock follows Keywork's format (`Thu Sep 10  04:32 PM`) and refreshes at the
 next minute boundary. Ourokit owns the Wayland connection, rendering, event
-loop, Lua VM, and application lifecycle; this repository contains only Lua.
+loop, Lua VM, and application lifecycle; this repository contains Lua and a
+small SVG backdrop asset.
 
 ## Run
 
 Build Ourokit, then run Ouroshell from this directory. This bar requires
 [Ourokit's per-output panel support](https://github.com/rockorager/ourokit/commit/b2ee04beda0877f28284cbb3d3d6499487be64d3)
 or later: `ouro.time`, `ouro.date`, `ouro.spawn`, edge-to-edge layer content,
-`outputs = "all"` declarations, and `workspace.outputs` membership. Rebuild
-Ourokit rather than using an older installed `ouroctl`.
+`outputs = "all"` declarations, and `workspace.outputs` membership. The launcher
+also requires layer-surface `background`/`background_effect`, styled boxes,
+text-input `placeholder`/`label`, `ouro.stack`, and image fill dimensions.
+Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 
 ```sh
 cd ~/repos/ourokit
@@ -81,12 +84,37 @@ systemctl --user status dev.ouro.shell.socket dev.ouro.shell.service
 journalctl --user -u dev.ouro.shell.service
 ```
 
-## Application launcher
+## Global launcher
 
-Call `launcher.toggle` on the shell's Ourokit MCP socket to show or dismiss the
-centered launcher. It discovers visible XDG desktop applications in a spawned
-task, then searches names, generic names, desktop IDs, and keywords. Arrow keys
-change selection, Enter launches, Escape dismisses, and results are clickable.
+Click the bar's launcher button or call `launcher.toggle` on the shell's Ourokit
+MCP socket. The backdrop fills the selected output below the bar. A translucent
+tint and feathered, rounded-rectangle SVG shade follow the content column without
+an enclosing card. Subtle dithering keeps the broad alpha fade from banding.
+Real backdrop blur is requested through `ext-background-effect-v1`; compositors
+without it show the tint and vignette without blur.
+
+All combines applications and system actions. Its empty-query view shows the
+first three applications alphabetically; Apps browses the full catalog. Search
+matches application names, generic names, desktop IDs, and keywords. Up/Down
+change selection, Enter opens, and Escape goes back or dismisses. Scope buttons
+and rows are clickable. Reopening resets the query and any pending confirmation.
+Application-provided menu items are not implemented or shown yet.
+
+System offers Lock screen and Session. Session contains Log out, Restart, and
+Shut down; these actions are also directly searchable (including `reboot`,
+`shutdown`, and `logout`). Each requires confirmation with **Cancel selected by
+default**. Actions use fixed requests, never commands derived from search text:
+
+- Lock: `loginctl lock-session auto`, requiring logind and a session lock handler.
+- Log out: Ouro's `exit` tool, ending this compositor session rather than all
+  sessions belonging to the user.
+- Restart: `systemctl reboot`.
+- Shut down: `systemctl poweroff`.
+
+No force flags or privilege bypasses are used. Request submission failures stay
+visible in the launcher. Ouro's `run` acknowledges process launch, not eventual
+exit status: acceptance does not prove the computer restarted or the screen
+locked. System policy, inhibitors, and the installed lock handler still apply.
 
 Exec parsing and field-code expansion are delegated to
 `ouro.xdg.applications.prepare_launch`; no command is shell-evaluated. Launches
@@ -134,9 +162,10 @@ lua tests/launcher.lua
 for file in src/*.lua tests/*.lua; do luac -p "$file"; done
 ```
 
-Preview active, urgent, narrow, unavailable, empty, and populated launcher
-states on a Wayland compositor. The fixture clock is fixed; controls remain
-interactive:
+Preview the launcher and active/urgent workspaces on a Wayland compositor.
+The clock and application catalog are fixtures; search, scopes, confirmations,
+and dismissal remain interactive. Every command is intercepted, so this
+preview cannot launch applications, lock, log out, or power off:
 
 ```sh
 ../ourokit/zig-out/bin/ouroctl run src/preview.lua --software
@@ -153,7 +182,10 @@ It starts an isolated headless compositor, creates fixture desktop entries,
 and captures launch requests with a fake Ouro endpoint; it does not launch
 applications or change the live desktop. Set `OUROSHELL_TEST_ARTIFACTS` to keep
 screenshots and logs. It exercises typing, selection beyond the first page,
-MCP toggles, dismissal, refocus, source reload, launch errors, and shutdown.
+MCP toggles, dismissal, refocus, source reload, launch errors, safe confirmation
+defaults and fixed system requests, resizing, the full-area vignette, and the
+uncovered bar. Sway verifies the no-blur fallback; real blur needs a compositor
+advertising `ext-background-effect-v1`.
 
 Check the systemd units with an installed `~/.local/bin/ouroctl` and an active
 graphical session:
@@ -174,4 +206,5 @@ removal when the socket unit stops. It leaves the live shell untouched.
 - `src/application.lua` owns the workspace connection, clock task, and panel.
 - `src/bar.lua` renders workspace state and time.
 - `src/launcher.lua` owns launcher search, state, launch policy, and content.
+- `src/assets/launcher-vignette.svg` supplies the soft center-to-edge shading.
 - `src/preview.lua` supplies interactive visual fixtures.
