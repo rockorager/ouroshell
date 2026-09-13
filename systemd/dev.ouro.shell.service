@@ -1,0 +1,10 @@
+[Unit]
+Description=Ouroshell
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/ouroctl run %h/.local/share/ouroshell/ouro.json
+Restart=on-failure
+RestartSec=1

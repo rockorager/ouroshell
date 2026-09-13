@@ -1,0 +1,14 @@
+[Unit]
+Description=Ouroshell MCP socket
+PartOf=graphical-session.target
+
+[Socket]
+ListenStream=%t/ourokit/apps/dev.ouro.shell
+FileDescriptorName=mcp
+SocketMode=0600
+DirectoryMode=0700
+Accept=no
+RemoveOnStop=yes
+
+[Install]
+WantedBy=graphical-session.target

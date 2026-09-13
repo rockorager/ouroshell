@@ -48,6 +48,39 @@ While Ouroshell is running, reload source changes transactionally with:
 The application's actions table enables Ourokit's runtime control interface,
 including status, source reload, and `launcher.toggle`.
 
+## Install with systemd socket activation
+
+Install `ouroctl` in `~/.local/bin` and the shell in
+`~/.local/share/ouroshell`, then install the user units:
+
+```sh
+mkdir -p ~/.local/share/ouroshell ~/.config/systemd/user
+cp -r ouro.json src ~/.local/share/ouroshell/
+cp systemd/dev.ouro.shell.{socket,service} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now dev.ouro.shell.socket
+ouroctl activate dev.ouro.shell
+```
+
+Stop any manually launched shell before starting the socket unit. Systemd owns
+`$XDG_RUNTIME_DIR/ourokit/apps/dev.ouro.shell`, passes its listener to Ourokit,
+and keeps it open across service crashes and restarts. Both units stop with the
+graphical session; only the socket is enabled at login. Do not run a separate
+shell process alongside the managed service.
+
+Connecting starts the process on demand. Catalog and status requests do not
+present windows: use `ouroctl activate dev.ouro.shell` (or `runtime.activate`)
+to show the bar before using the launcher. `ouroctl run` with the installed
+manifest also activates the existing endpoint. After a service restart, activate
+the UI again; window and launcher state are not restored automatically.
+
+For logs and status:
+
+```sh
+systemctl --user status dev.ouro.shell.socket dev.ouro.shell.service
+journalctl --user -u dev.ouro.shell.service
+```
+
 ## Application launcher
 
 Call `launcher.toggle` on the shell's Ourokit MCP socket to show or dismiss the
@@ -86,9 +119,10 @@ ordinary tool calls and waiting do not discover new installations. Repeat the
 export and reload after changing actions or upgrading Ourokit's runtime tools.
 
 The descriptor exposes `runtime.status`, `runtime.reload`, `runtime.activate`,
-and `launcher.toggle`. It does not launch Ouroshell: start it with `ouroctl run`
-as above before calling these tools. `runtime.activate` presents the UI of an
-already-running application; it does not start an absent process.
+and `launcher.toggle`. With the socket unit enabled, calls start the service
+on demand; `runtime.activate` then presents its UI. Without socket activation,
+start Ouroshell with `ouroctl run` before calling these tools. The descriptor
+alone does not launch a process.
 
 ## Check and preview
 
@@ -120,6 +154,19 @@ and captures launch requests with a fake Ouro endpoint; it does not launch
 applications or change the live desktop. Set `OUROSHELL_TEST_ARTIFACTS` to keep
 screenshots and logs. It exercises typing, selection beyond the first page,
 MCP toggles, dismissal, refocus, source reload, launch errors, and shutdown.
+
+Check the systemd units with an installed `~/.local/bin/ouroctl` and an active
+graphical session:
+
+```sh
+systemd-analyze --user verify systemd/dev.ouro.shell.{socket,service}
+python3 tests/socket_activation.py
+```
+
+The activation test uses temporary units and a private socket, creates no UI,
+and kills only its test service. It verifies on-demand startup, crash recovery
+without replacing the listener, reactivation after service shutdown, and socket
+removal when the socket unit stops. It leaves the live shell untouched.
 
 ## Layout
 
