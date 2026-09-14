@@ -1,6 +1,6 @@
 local ouro = require("ouro")
 
-local M = { background = "#11182098" }
+local M = { background = "#111820E6" }
 local visible_rows = 7
 local colors = {
   selected = "#29415F99", selected_border = "#527DA5B0",
@@ -333,7 +333,6 @@ function M.content(state, height)
     elseif state.phase() == "error" then status = "Applications unavailable. System actions are still available." end
   end
   return ouro.stack { key = "launcher", children = {
-    ouro.image { key = "vignette", src = "assets/launcher-vignette.svg", width = "fill", height = "fill", fit = "fill", alt = "" },
     ouro.box { key = "position", width = "fill", height = "fill", padding = 24, alignment = "center", children = {
       ouro.box { key = "palette", width = 560, height = 620, children = {
         ouro.column { key = "content", gap = 16, cross_alignment = "stretch", children = {

@@ -60,8 +60,8 @@ local function find(tree, key)
   end
 end
 local tree = launcher.content(state)
-assert(tree.kind == "stack" and tree.children[1].key == "vignette")
-assert(find(tree, "vignette").width == "fill" and find(tree, "vignette").height == "fill")
+assert(tree.kind == "stack" and #tree.children == 1 and tree.children[1].key == "position")
+assert(find(tree, "vignette") == nil)
 assert(find(tree, "position").width == "fill" and find(tree, "position").height == "fill")
 assert(find(tree, "palette").background == nil and find(tree, "palette").surface == nil)
 assert(find(tree, "results-scroll").flex == 1)

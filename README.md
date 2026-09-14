@@ -12,8 +12,7 @@ the clock. The round button at the left opens the global launcher.
 
 The clock follows Keywork's format (`Thu Sep 10  04:32 PM`) and refreshes at the
 next minute boundary. Ourokit owns the Wayland connection, rendering, event
-loop, Lua VM, and application lifecycle; this repository contains Lua and a
-small SVG backdrop asset.
+loop, Lua VM, and application lifecycle; this repository contains the shell's Lua.
 
 ## Run
 
@@ -87,11 +86,11 @@ journalctl --user -u dev.ouro.shell.service
 ## Global launcher
 
 Click the bar's launcher button or call `launcher.toggle` on the shell's Ourokit
-MCP socket. The backdrop fills the selected output below the bar. A translucent
-tint and feathered, rounded-rectangle SVG shade follow the content column without
-an enclosing card. Subtle dithering keeps the broad alpha fade from banding.
+MCP socket. A uniform translucent tint fills the selected output below the bar,
+without a gradient or enclosing card. Its opacity is controlled by the alpha
+channel of `launcher.background` in `src/launcher.lua` (currently 90%).
 Real backdrop blur is requested through `ext-background-effect-v1`; compositors
-without it show the tint and vignette without blur.
+without it show the tint without blur.
 
 All combines applications and system actions. Its empty-query view shows the
 first three applications alphabetically; Apps browses the full catalog. Search
@@ -192,7 +191,7 @@ and captures launch requests with a fake Ouro endpoint; it does not launch
 applications or change the live desktop. Set `OUROSHELL_TEST_ARTIFACTS` to keep
 screenshots and logs. It exercises typing, selection beyond the first page,
 MCP toggles, dismissal, refocus, source reload, launch errors, safe confirmation
-defaults and fixed system requests, resizing, the full-area vignette, and the
+defaults and fixed system requests, resizing, the uniform overlay tint, and the
 uncovered bar. Sway verifies the no-blur fallback; real blur needs a compositor
 advertising `ext-background-effect-v1`.
 
@@ -215,5 +214,4 @@ removal when the socket unit stops. It leaves the live shell untouched.
 - `src/application.lua` owns the workspace connection, clock task, and panel.
 - `src/bar.lua` renders workspace state and time.
 - `src/launcher.lua` owns launcher search, state, launch policy, and content.
-- `src/assets/launcher-vignette.svg` supplies the soft center-to-edge shading.
 - `src/preview.lua` supplies interactive visual fixtures.

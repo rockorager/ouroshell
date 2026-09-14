@@ -228,7 +228,7 @@ def main():
                         assert bar.crop((0, 0, 1000, 40)).tobytes() == image.crop((0, 0, 1000, 40)).tobytes(), "launcher covered the bar"
                         bounds = ImageChops.difference(bar.convert("RGB"), image.convert("RGB")).crop((0, 40, 1280, 800)).getbbox()
                         assert bounds == (0, 0, 1280, 760), (state, bounds)
-                        assert sum(image.getpixel((940, 400))[:3]) < sum(image.getpixel((20, 400))[:3]), "missing center-to-edge fade"
+                        assert image.getpixel((940, 400)) == image.getpixel((20, 400)) == image.getpixel((640, 60)), "overlay tint is not uniform"
                     with Image.open(artifacts / "launcher.png") as original, Image.open(artifacts / f"{state}.png") as image:
                         # Compare only the pill's top border, not query or caret.
                         border = (left + 40, top, right - 40, top + 2)
@@ -297,7 +297,7 @@ def main():
                 # Return home after the asynchronous themed icons have loaded.
                 capture("preview")
                 assert len(launches) == 9, "preview sent a real request"
-                print("PASS: native search, full-area tint/fade, uncovered bar, paging, argv/cwd, confirmations, Escape, resize, refocus, clean exit")
+                print("PASS: native search, uniform overlay tint, uncovered bar, paging, argv/cwd, confirmations, Escape, resize, refocus, clean exit")
                 print(f"Captures: {artifacts}")
             finally:
                 if pointer:
