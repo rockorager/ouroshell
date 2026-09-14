@@ -6,7 +6,7 @@ Ouroshell is a Lua desktop shell built on the
 The shell provides a 40px top bar on every output, with that output's clickable
 workspaces on the left and local date/time on the right. Workspace names sort
 by their leading number, then alphabetically; hidden workspaces are omitted.
-Active workspaces have a pale-blue underline and urgent workspaces use red text.
+Active workspaces have a rounded blue background and urgent workspaces use red text.
 The workspace list scrolls horizontally when space is tight, leaving room for
 the clock. The round button at the left opens the global launcher.
 

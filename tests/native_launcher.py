@@ -171,6 +171,14 @@ def main():
                 baseline = capture("bar")
                 call(endpoint, "launcher.toggle")
                 capture("launcher")
+                with Image.open(artifacts / "launcher.png") as image:
+                    line_y = top + 54 + 16 + 36
+                    accent = image.getpixel((left + 18, line_y))
+                    assert accent != image.getpixel((left + 150, line_y)), "scope underline collapsed"
+                    span = 0
+                    while span < 100 and image.getpixel((left + span, line_y)) == accent:
+                        span += 1
+                    assert 40 <= span < 100, ("scope underline must span the padded All label", span)
                 assert call(endpoint, "runtime.reload", allow_error=True).get("isError")
                 keys("Fixture")
                 searched = capture("search")

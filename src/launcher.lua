@@ -318,7 +318,7 @@ function M.content(state, height)
   else
     for _, scope in ipairs({ { "all", "All" }, { "apps", "Apps" }, { "system", "System" } }) do
       local active = state.scope() == scope[1]
-      tabs[#tabs + 1] = ouro.column { key = "scope-" .. scope[1], gap = 0, children = {
+      tabs[#tabs + 1] = ouro.column { key = "scope-" .. scope[1], gap = 0, cross_alignment = "stretch", children = {
         ouro.button { key = "button", label = scope[2], height = 36, padding_x = 18, radius = 6,
           background = colors.transparent, foreground = active and colors.foreground or colors.muted, hover = colors.hover,
           on_press = function() state.choose_scope(scope[1]) end },

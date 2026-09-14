@@ -7,7 +7,8 @@ local colors = {
   foreground = "#EDEEF0",
   muted = "#B0B4BA",
   hover = "#2B2D31",
-  accent = "#8ABCF0",
+  selected = "#253974",
+  selected_hover = "#304384",
   background = "#19212A",
   urgent = "#FF9592",
   transparent = "#00000000",
@@ -58,28 +59,21 @@ function M.content(state, time, output, toggle_launcher)
     local workspace = item.workspace
     local foreground = workspace.urgent and colors.urgent
       or workspace.active and colors.foreground or colors.muted
+    local background = workspace.active and colors.selected or colors.transparent
     items[#items + 1] = ouro.button {
       key = "workspace-" .. item.key,
       label = workspace.name,
       enabled = workspace.can_activate,
-      height = 40,
+      height = 24,
       padding_x = 10,
-      radius = 0,
+      radius = 4,
       font_size = ouro.tokens.foundation.typography_3,
-      background = colors.transparent,
+      background = background,
       foreground = foreground,
-      hover = colors.hover,
-      disabled = colors.transparent,
+      hover = workspace.active and colors.selected_hover or colors.hover,
+      disabled = background,
       disabled_foreground = foreground,
       on_press = workspace.can_activate and not workspace.active and workspace.activate or nil,
-      children = { ouro.column { key = "workspace", gap = 0, children = {
-        ouro.box { key = "label", height = 38, alignment = "center", children = {
-          ouro.text { key = "name", text = workspace.name, size = ouro.tokens.foundation.typography_3,
-            foreground = foreground, max_lines = 1 },
-        } },
-        ouro.box { key = "indicator", width = "fill", height = 2,
-          background = workspace.active and colors.accent or colors.transparent },
-      } } },
     }
   end
   if #items == 0 then

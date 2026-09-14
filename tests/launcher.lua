@@ -65,6 +65,10 @@ assert(find(tree, "vignette") == nil)
 assert(find(tree, "position").width == "fill" and find(tree, "position").height == "fill")
 assert(find(tree, "palette").background == nil and find(tree, "palette").surface == nil)
 assert(find(tree, "results-scroll").flex == 1)
+for _, scope in ipairs({ "all", "apps", "system" }) do
+  assert(find(tree, "scope-" .. scope).cross_alignment == "stretch",
+    "scope indicators must stretch to their measured label width")
+end
 local input = find(tree, "search-" .. state.input_generation())
 assert(input.autofocus and type(input.on_command) == "function")
 input.on_command("next"); assert(state.selected() == 1)

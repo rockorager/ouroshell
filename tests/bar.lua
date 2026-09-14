@@ -33,7 +33,13 @@ items[4].on_press()
 assert(activated == "ten", "click activated the wrong workspace")
 assert(items[2].on_press == nil, "active workspace should not reactivate")
 assert(not items[5].enabled and items[5].on_press == nil)
-assert(items[2].children[1].children[2].background ~= items[1].children[1].children[2].background)
+assert(items[2].background == "#253974" and items[2].hover == "#304384",
+  "active workspace must retain its blue fill and hover color")
+assert(items[1].background == "#00000000" and items[1].hover == "#2B2D31")
+assert(items[2].height == 24 and items[2].radius == 4 and items[2].children == nil,
+  "workspace selection must be a rounded button, not a custom underline")
+assert(items[2].disabled == items[2].background,
+  "active workspace must keep its fill even when activation is unavailable")
 assert(items[3].foreground ~= items[1].foreground)
 assert(tree.children[1].children[3].text == "Thu Sep 10  04:32 PM")
 assert(tree.children[1].children[3].size == 23, "clock must use typography_3")
