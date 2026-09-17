@@ -1,10 +1,26 @@
 package.path = "src/?.lua;" .. package.path
 -- A non-default value detects literals instead of references to the catalog.
-local ouro = { tokens = { foundation = { typography_3 = 23 } } }
+local ouro = { tokens = {
+  foundation = {
+    typography_2 = 14, typography_3 = 23, typography_7 = 28, line_height_2 = 20,
+    spacing_1 = 4, spacing_2 = 8, spacing_3 = 15, spacing_4 = 19,
+    spacing_5 = 24, spacing_6 = 32, spacing_8 = 48, radius_2 = 5,
+    border_width_default = 1, border_width_strong = 2,
+  },
+  dark = setmetatable({ background = "#012345FF" }, { __index = function(_, key) return "token:" .. key end }),
+  palette = { transparent = "#00000000", dark = {
+    indigo = { step_6 = "token:indigo6" }, red = { step_11 = "token:red11" },
+  } },
+} }
 for _, kind in ipairs({ "box", "row", "column", "scroll", "text", "button", "text_input", "icon", "app", "layer_surface" }) do
   ouro[kind] = function(props) props.kind = kind; return props end
 end
 package.loaded.ouro = ouro
+local scheme = "dark"
+package.loaded.appearance = {
+  colors = function() return ouro.tokens[scheme], ouro.tokens.palette[scheme] end,
+  connect = function() end,
+}
 local bar = require("bar")
 
 local function workspace_items(tree)
@@ -25,7 +41,9 @@ local items = workspace_items(tree)
 assert(#items == 5)
 for index, name in ipairs({ "1", "2:code", "2:mail", "10", "chat" }) do
   assert(items[index].label == name)
-  assert(items[index].font_size == 23, "workspace buttons must use typography_3")
+  for _, property in ipairs({ "height", "padding_x", "padding_y", "radius", "font_size" }) do
+    assert(items[index][property] == nil, "workspace buttons must inherit default " .. property)
+  end
 end
 assert(state.workspaces[1].name == "10", "sorting mutated the protocol snapshot")
 assert(items[4].key == "workspace-id:1:ten")
@@ -33,17 +51,41 @@ items[4].on_press()
 assert(activated == "ten", "click activated the wrong workspace")
 assert(items[2].on_press == nil, "active workspace should not reactivate")
 assert(not items[5].enabled and items[5].on_press == nil)
-assert(items[2].background == "#253974" and items[2].hover == "#304384",
-  "active workspace must retain its blue fill and hover color")
-assert(items[1].background == "#00000000" and items[1].hover == "#2B2D31")
-assert(items[2].height == 24 and items[2].radius == 4 and items[2].children == nil,
+assert(tree.surface == "sidebar" and tree.background == nil, "bar must use the existing sidebar surface")
+assert(items[2].background == ouro.tokens.dark.accent_selected and items[2].hover == ouro.tokens.palette.dark.indigo.step_6,
+  "active workspace must use the blue selection tokens")
+assert(items[1].background == ouro.tokens.palette.transparent and items[1].hover == ouro.tokens.dark.sidebar_accent)
+assert(items[2].foreground == ouro.tokens.dark.sidebar_foreground and items[1].foreground == ouro.tokens.dark.muted_foreground)
+assert(items[3].foreground == ouro.tokens.palette.dark.red.step_11)
+assert(items[2].children == nil,
   "workspace selection must be a rounded button, not a custom underline")
+local menu = tree.children[1].children[1]
+for _, property in ipairs({ "height", "padding_x", "padding_y", "radius", "font_size" }) do
+  assert(menu[property] == nil, "menu button must inherit default " .. property)
+end
+assert(tree.padding == ouro.tokens.foundation.spacing_1, "bar must inset controls from both desktop edges")
+assert(#tree.children[1].children == 3, "bar padding must replace the trailing spacer")
+assert(tree.children[1].gap == ouro.tokens.foundation.spacing_1)
+assert(tree.children[1].gap == tree.children[1].children[2].children[1].gap,
+  "menu-to-workspace gap must match workspace-to-workspace gap")
+assert(menu.children[1].size == nil, "menu mark must inherit default text size")
 assert(items[2].disabled == items[2].background,
   "active workspace must keep its fill even when activation is unavailable")
 assert(items[3].foreground ~= items[1].foreground)
 assert(tree.children[1].children[3].text == "Thu Sep 10  04:32 PM")
 assert(tree.children[1].children[3].size == 23, "clock must use typography_3")
 assert(tree.children[1].children[2].axis == "horizontal")
+
+ouro.tokens.light = setmetatable({}, { __index = function(_, key) return "light:" .. key end })
+ouro.tokens.palette.light = { indigo = { step_6 = "light:indigo6" }, red = { step_11 = "light:red11" } }
+scheme = "light"
+local light_tree = bar.content(state, "time")
+local light_items = workspace_items(light_tree)
+assert(light_items[2].background == "light:accent_selected" and light_items[2].hover == "light:indigo6")
+assert(light_items[1].foreground == "light:muted_foreground" and light_items[3].foreground == "light:red11")
+assert(light_tree.children[1].children[1].foreground == "light:muted_foreground")
+assert(light_items[2].key == items[2].key, "retheming must retain workspace identity")
+scheme = "dark"
 
 assert(workspace_items(bar.content({ available = false, workspaces = state.workspaces }, "time"))[1].text
   == "Workspaces unavailable")
@@ -109,6 +151,7 @@ end
 ouro.sleep = function(ms) delay = ms; coroutine.yield() end
 ouro.shell = { workspaces = { connect = function() return function() return state end end } }
 local app = dofile("src/application.lua")
+assert(app.theme == nil, "shell must inherit the host theme")
 local running = app.run()
 local windows = running.windows()
 local panel = windows[1]

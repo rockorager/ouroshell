@@ -1,13 +1,20 @@
 local ouro = require("ouro")
+local appearance = require("appearance")
+local f = ouro.tokens.foundation
 
-local M = { background = "#111820E6" }
+local M = {}
 local visible_rows = 7
-local colors = {
-  selected = "#29415F99", selected_border = "#527DA5B0",
-  foreground = "#EDF1F5", muted = "#ADB7C3", error = "#FFB4B0",
-  input = "#C3D2E012", border = "#BCCFE038", accent = "#8ABCF0",
-  transparent = "#00000000", hover = "#C3D2E014", line = "#BCCFE02B",
-}
+-- Layout dimensions shared by rendering and keyboard paging. Result rows
+-- accommodate two text lines; the palette remains the chosen 560x620 layout.
+local row_height, palette_height = 56, 620
+local search_height, tab_height = f.spacing_8, f.spacing_6
+
+function M.background()
+  local theme = appearance.colors()
+  -- Let more of the backdrop show through the light overlay.
+  local alpha = theme == ouro.tokens.light and "BF" or "E6"
+  return theme.background:sub(1, 7) .. alpha
+end
 
 -- These are shell-owned actions, never commands supplied by search text.
 local lock = {
@@ -229,71 +236,82 @@ local function icon(key, name, size, tint)
   return ouro.xdg.icon { key = key, name = name, theme = "Adwaita", width = size, height = size, tint = tint, alt = "" }
 end
 
-local function rule(key)
-  return ouro.box { key = key, height = 1, width = "fill", background = colors.line }
+local function rule(key, colors)
+  return ouro.box { key = key, height = f.border_width_default, width = "fill", background = colors.line }
 end
 
-local function result_row(state, entry, index)
+local function result_row(state, entry, index, colors)
   local name = entry.icon
   if not name or name == ouro.json.null then name = "application-x-executable-symbolic" end
   local description = entry.description or entry.generic_name
   if type(description) ~= "string" or description == "" then
     description = entry.kind == "system" and "" or "Application"
   end
-  local text = { ouro.text { key = "name", text = entry.name, size = 16,
+  local text = { ouro.text { key = "name", text = entry.name, size = f.typography_3,
     foreground = colors.foreground, max_lines = 1, overflow = "ellipsis" } }
   if description ~= "" then
-    text[#text + 1] = ouro.text { key = "description", text = description, size = 13,
+    text[#text + 1] = ouro.text { key = "description", text = description, size = f.typography_2,
       foreground = colors.muted, max_lines = 1, overflow = "ellipsis" }
   end
   local contents = {
-    icon("icon", name, 28, entry.kind == "system" and colors.foreground or nil),
-    ouro.column { key = "text", gap = 1, flex = 1, cross_alignment = "stretch", children = text },
+    icon("icon", name, f.spacing_5, entry.kind == "system" and colors.foreground or nil),
+    ouro.column { key = "text", gap = f.spacing_1, flex = 1, cross_alignment = "stretch", children = text },
   }
-  if entry.submenu then contents[#contents + 1] = icon("disclosure", "go-next-symbolic", 16, colors.muted) end
+  if entry.submenu then contents[#contents + 1] = icon("disclosure", "go-next-symbolic", f.spacing_4, colors.muted) end
   return ouro.button {
     key = (entry.kind == "system" and "system-" or "application-") .. entry.id,
-    label = entry.name, height = 56, padding_x = 14, radius = 8,
+    label = entry.name, height = row_height,
     background = index == state.selected() and colors.selected or colors.transparent,
-    border = index == state.selected() and colors.selected_border or colors.transparent, border_width = 1,
+    border = index == state.selected() and colors.selected_border or colors.transparent, border_width = f.border_width_default,
     foreground = colors.foreground, hover = colors.hover,
     on_press = function() state.launch(entry) end,
     children = { ouro.box { key = "contents", width = "fill", children = {
-      ouro.row { key = "row", gap = 16, cross_alignment = "center", children = contents },
+      ouro.row { key = "row", gap = f.spacing_4, cross_alignment = "center", children = contents },
     } } },
   }
 end
 
-local function confirmation(state)
+local function confirmation(state, colors)
   local entry = state.confirming()
   local children = {
-    ouro.text { key = "title", text = entry.verb .. "?", size = 28, foreground = colors.foreground },
+    ouro.text { key = "title", text = entry.verb .. "?", size = f.typography_7, foreground = colors.foreground },
     ouro.text { key = "warning", text = "Save your work before continuing. Unsaved changes may be lost.",
-      size = 16, foreground = colors.muted, max_lines = 3 },
+      size = f.typography_3, foreground = colors.muted, max_lines = 3 },
   }
   for index, label in ipairs({ "Cancel", entry.verb }) do
     children[#children + 1] = ouro.button {
-      key = index == 1 and "cancel" or "confirm", label = label, height = 48, radius = 8,
+      key = index == 1 and "cancel" or "confirm", label = label,
       foreground = index == 1 and colors.foreground or colors.error,
       background = state.selected() == index and colors.selected or colors.transparent,
-      border = state.selected() == index and colors.selected_border or colors.border, border_width = 1,
+      border = state.selected() == index and colors.selected_border or colors.border, border_width = f.border_width_default,
       hover = colors.hover, on_press = index == 1 and state.back or state.confirm,
     }
   end
-  return ouro.column { key = "confirmation", gap = 20, cross_alignment = "stretch", children = children }
+  return ouro.column { key = "confirmation", gap = f.spacing_4, cross_alignment = "stretch", children = children }
 end
 
 function M.content(state, height)
+  local theme, palette = appearance.colors()
+  local colors = {
+    selected = theme.accent_selected, selected_border = theme.ring,
+    foreground = theme.foreground, muted = theme.muted_foreground,
+    error = palette.red.step_11, input = theme.surface, input_border = theme.input,
+    border = theme.border, accent = theme.primary, hover = theme.accent_hover,
+    transparent = ouro.tokens.palette.transparent, line = theme.border,
+  }
   local results = state.results()
   local has_apps, has_system = false, false
   for _, entry in ipairs(results) do
     if entry.kind == "system" then has_system = true else has_apps = true end
   end
-  local heading_space = has_apps and has_system and 46 or 20
+  local heading_space = f.line_height_2 + f.spacing_1
+  if has_apps and has_system then heading_space = 2 * heading_space + f.border_width_default + f.spacing_1 end
   -- Keep the keyboard-selected row visible on short outputs as well. Content
   -- callbacks receive configured logical dimensions; no layout-time mutation.
-  local available = math.min(620, (height or 760) - 48) - 164 - heading_space
-  local capacity = math.max(1, math.min(visible_rows, math.floor((available + 5) / 61)))
+  local scopes_height = tab_height + f.border_width_strong + f.border_width_default
+  local chrome_height = search_height + scopes_height + 3 * f.spacing_4 + 2 * f.line_height_2
+  local available = math.min(palette_height, (height or 760) - 2 * f.spacing_5) - chrome_height - heading_space
+  local capacity = math.max(1, math.min(visible_rows, math.floor((available + f.spacing_1) / (row_height + f.spacing_1))))
   local first = math.max(1, math.min(state.first(), #results - capacity + 1))
   if state.selected() < first then first = state.selected()
   elseif state.selected() >= first + capacity then first = state.selected() - capacity + 1 end
@@ -302,27 +320,27 @@ function M.content(state, height)
     local entry = results[index]
     local next_group = entry.kind == "system" and (state.page() and "Session" or "System") or "Applications"
     if next_group ~= group then
-      if group then rows[#rows + 1] = rule("rule-" .. next_group) end
-      rows[#rows + 1] = ouro.text { key = "heading-" .. next_group, text = next_group, size = 13, foreground = colors.muted }
+      if group then rows[#rows + 1] = rule("rule-" .. next_group, colors) end
+      rows[#rows + 1] = ouro.text { key = "heading-" .. next_group, text = next_group, size = f.typography_2, foreground = colors.muted }
       group = next_group
     end
-    rows[#rows + 1] = result_row(state, entry, index)
+    rows[#rows + 1] = result_row(state, entry, index, colors)
   end
   if #results == 0 then
-    rows[1] = ouro.text { key = "empty", text = "No matches. Try another name or keyword.", size = 16, foreground = colors.muted }
+    rows[1] = ouro.text { key = "empty", text = "No matches. Try another name or keyword.", size = f.typography_3, foreground = colors.muted }
   end
   local tabs = {}
   if state.page() or state.confirming() then
-    tabs[1] = ouro.button { key = "back", label = "← Back", height = 36, padding_x = 12, radius = 6,
+    tabs[1] = ouro.button { key = "back", label = "← Back",
       background = colors.transparent, foreground = colors.muted, hover = colors.hover, on_press = state.back }
   else
     for _, scope in ipairs({ { "all", "All" }, { "apps", "Apps" }, { "system", "System" } }) do
       local active = state.scope() == scope[1]
       tabs[#tabs + 1] = ouro.column { key = "scope-" .. scope[1], gap = 0, cross_alignment = "stretch", children = {
-        ouro.button { key = "button", label = scope[2], height = 36, padding_x = 18, radius = 6,
+        ouro.button { key = "button", label = scope[2],
           background = colors.transparent, foreground = active and colors.foreground or colors.muted, hover = colors.hover,
           on_press = function() state.choose_scope(scope[1]) end },
-        ouro.box { key = "indicator", width = "fill", height = 2, background = active and colors.accent or colors.transparent },
+        ouro.box { key = "indicator", width = "fill", height = f.border_width_strong, background = active and colors.accent or colors.transparent },
       } }
     end
   end
@@ -333,34 +351,34 @@ function M.content(state, height)
     elseif state.phase() == "error" then status = "Applications unavailable. System actions are still available." end
   end
   return ouro.stack { key = "launcher", children = {
-    ouro.box { key = "position", width = "fill", height = "fill", padding = 24, alignment = "center", children = {
-      ouro.box { key = "palette", width = 560, height = 620, children = {
-        ouro.column { key = "content", gap = 16, cross_alignment = "stretch", children = {
-          ouro.box { key = "search-shell", width = "fill", height = 54, alignment = "center",
-            background = colors.input, border = colors.border, border_width = 1, radius = 27, children = {
-            ouro.row { key = "search-row", gap = 12, cross_alignment = "center", children = {
-              ouro.box { key = "search-inset-start", width = 10 },
-              icon("search-icon", "system-search-symbolic", 22, colors.foreground),
+    ouro.box { key = "position", width = "fill", height = "fill", padding = f.spacing_5, alignment = "center", children = {
+      ouro.box { key = "palette", width = 560, height = palette_height, children = {
+        ouro.column { key = "content", gap = f.spacing_4, cross_alignment = "stretch", children = {
+          ouro.box { key = "search-shell", width = "fill", height = search_height, alignment = "center",
+            background = colors.input, border = colors.input_border, border_width = f.border_width_default, radius = f.radius_2, children = {
+            ouro.row { key = "search-row", gap = f.spacing_2, cross_alignment = "center", children = {
+              ouro.box { key = "search-inset-start", width = f.spacing_1 },
+              icon("search-icon", "system-search-symbolic", f.spacing_5, colors.foreground),
               ouro.text_input {
                 key = "search-" .. state.input_generation(), text = state.confirming() and "" or state.query(),
                 label = "Search apps and commands", placeholder = state.confirming() and "Confirmation" or "Search apps and commands…",
-                autofocus = true, read_only = state.confirming() ~= nil, height = 32, flex = 1,
-                font_size = 17, padding_x = 0, border_width = 0, background = colors.transparent,
+                autofocus = true, read_only = state.confirming() ~= nil, flex = 1,
+                padding_x = 0, border_width = 0, background = colors.transparent,
                 foreground = colors.foreground, on_change = state.change,
                 on_command = function(command) state.command(command, capacity) end,
               },
-              ouro.box { key = "search-inset-end", width = 10 },
+              ouro.box { key = "search-inset-end", width = f.spacing_1 },
             } },
           } },
           ouro.column { key = "scopes", gap = 0, cross_alignment = "stretch", children = {
-            ouro.row { key = "tabs", gap = 8, children = tabs }, rule("scope-rule"),
+            ouro.row { key = "tabs", gap = f.spacing_2, children = tabs }, rule("scope-rule", colors),
           } },
           ouro.scroll { key = "results-scroll", axis = "vertical", flex = 1, children = {
-            state.confirming() and confirmation(state) or ouro.column { key = "results", gap = 5, cross_alignment = "stretch", children = rows },
+            state.confirming() and confirmation(state, colors) or ouro.column { key = "results", gap = f.spacing_1, cross_alignment = "stretch", children = rows },
           } },
           ouro.text { key = "status", text = status or ("↑ ↓  Navigate     Enter  " .. (state.confirming() and "Choose" or "Open")
               .. "     Esc  " .. ((state.page() or state.confirming()) and "Back" or "Close")),
-            size = 13, foreground = state.message() and colors.error or colors.muted, max_lines = 2 },
+            size = f.typography_2, foreground = state.message() and colors.error or colors.muted, max_lines = 2 },
         } },
       } },
     } },

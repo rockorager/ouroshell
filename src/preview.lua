@@ -1,6 +1,7 @@
 local ouro = require("ouro")
 local bar = require("bar")
 local launcher = require("launcher")
+local appearance = require("appearance")
 local selected = ouro.signal("2")
 local time = "Thu Sep 10  04:32 PM"
 local visible = ouro.signal(true)
@@ -25,8 +26,8 @@ end
 
 return ouro.app {
   id = "dev.ouro.shell.preview",
-  theme = { color_scheme = "dark" },
   run = function()
+    appearance.connect()
     launcher_state = launcher.new {
       phase = "ready",
       dismiss = function() visible:set(false) end,
@@ -53,7 +54,7 @@ return ouro.app {
         windows[#windows + 1] = ouro.layer_surface {
           id = "launcher", namespace = "ouroshell-preview-launcher", layer = "overlay",
           width = 0, height = 0, anchors = { "top", "bottom", "left", "right" },
-          background = launcher.background, background_effect = "blur", keyboard_interactivity = "exclusive",
+          background = launcher.background(), background_effect = "blur", keyboard_interactivity = "exclusive",
           content = function(_, height) return launcher.content(launcher_state, height) end,
         }
       end

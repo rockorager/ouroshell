@@ -167,8 +167,14 @@ Run the Lua behavior checks (requires a standalone Lua interpreter):
 ```sh
 lua tests/bar.lua
 lua tests/launcher.lua
+lua tests/appearance.lua
 for file in src/*.lua tests/*.lua; do luac -p "$file"; done
 ```
+
+The bar and launcher follow ourosettings' `appearance.color_scheme` live,
+including custom control colors and the uniform translucent overlay. `default`
+uses the light palette, matching Ourokit. Settings outages retain the last
+palette and reconnect without clearing launcher state.
 
 Preview the launcher and active/urgent workspaces on a Wayland compositor.
 The clock and application catalog are fixtures; search, scopes, confirmations,
@@ -185,6 +191,12 @@ Pillow package installed:
 ```sh
 python3 tests/native_launcher.py
 ```
+
+To also test live theme changes against an isolated ourosettings daemon, set
+`OUROSETTINGS_TEST_BINARY` to an absolute path to its executable. The test uses
+temporary settings and sockets; it never changes the desktop's appearance.
+Pass `--appearance-only` to run the light/dark/default rendering checks without
+the keyboard-driven launcher suite.
 
 It starts an isolated headless compositor, creates fixture desktop entries,
 and captures launch requests with a fake Ouro endpoint; it does not launch

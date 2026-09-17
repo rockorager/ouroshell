@@ -1,18 +1,8 @@
 local ouro = require("ouro")
+local appearance = require("appearance")
+local f = ouro.tokens.foundation
 
 local M = { height = 40 }
-
--- Radix gray/blue/red roles for the shell's dark workspace controls.
-local colors = {
-  foreground = "#EDEEF0",
-  muted = "#B0B4BA",
-  hover = "#2B2D31",
-  selected = "#253974",
-  selected_hover = "#304384",
-  background = "#19212A",
-  urgent = "#FF9592",
-  transparent = "#00000000",
-}
 
 local function workspace_less(left, right)
   local a, b = left.workspace.name, right.workspace.name
@@ -33,6 +23,13 @@ local function belongs_to_output(workspace, output)
 end
 
 function M.content(state, time, output, toggle_launcher)
+  local theme, palette = appearance.colors()
+  local colors = {
+    foreground = theme.sidebar_foreground, muted = theme.muted_foreground,
+    hover = theme.sidebar_accent, selected = theme.accent_selected,
+    selected_hover = palette.indigo.step_6, urgent = palette.red.step_11,
+    transparent = ouro.tokens.palette.transparent,
+  }
   local visible = {}
   local occurrences = {}
   if state.available then
@@ -64,10 +61,6 @@ function M.content(state, time, output, toggle_launcher)
       key = "workspace-" .. item.key,
       label = workspace.name,
       enabled = workspace.can_activate,
-      height = 24,
-      padding_x = 10,
-      radius = 4,
-      font_size = ouro.tokens.foundation.typography_3,
       background = background,
       foreground = foreground,
       hover = workspace.active and colors.selected_hover or colors.hover,
@@ -89,29 +82,29 @@ function M.content(state, time, output, toggle_launcher)
     key = "panel-background",
     width = "fill",
     height = "fill",
-    background = colors.background,
+    surface = "sidebar",
+    padding = f.spacing_1,
     alignment = "center",
     children = {
       ouro.row {
         key = "panel-content",
-        gap = 12,
+        gap = f.spacing_1,
         cross_alignment = "center",
         children = {
-          ouro.button { key = "launcher", label = "Open launcher", height = 40, padding_x = 16, radius = 0,
+          ouro.button { key = "launcher", label = "Open launcher",
             background = colors.transparent, foreground = colors.muted, hover = colors.hover,
             on_press = toggle_launcher, children = {
-              ouro.text { key = "mark", text = "●", size = 17, foreground = colors.muted },
+              ouro.text { key = "mark", text = "●", foreground = colors.muted },
             } },
           ouro.scroll {
             key = "workspace-scroll",
             axis = "horizontal",
             flex = 1,
             children = {
-              ouro.row { key = "workspaces", gap = 4, children = items },
+              ouro.row { key = "workspaces", gap = f.spacing_1, children = items },
             },
           },
-          ouro.text { key = "clock", text = time, size = ouro.tokens.foundation.typography_3, max_lines = 1 },
-          ouro.box { key = "end-padding", width = 4 },
+          ouro.text { key = "clock", text = time, size = f.typography_3, max_lines = 1 },
         },
       },
     },

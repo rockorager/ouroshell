@@ -10,6 +10,7 @@ from pathlib import Path
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -61,8 +62,8 @@ def wait_for(check, message):
     raise AssertionError(message)
 
 
-def call(path, name, allow_error=False):
-    params = {"name": name, "arguments": {}, "_meta": {
+def call(path, name, allow_error=False, arguments=None):
+    params = {"name": name, "arguments": arguments or {}, "_meta": {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientCapabilities": {},
         "io.modelcontextprotocol/clientInfo": {"name": "launcher-test", "version": "1"},
@@ -80,6 +81,9 @@ def call(path, name, allow_error=False):
 
 
 def main():
+    appearance_only = "--appearance-only" in sys.argv
+    if appearance_only:
+        assert os.environ.get("OUROSETTINGS_TEST_BINARY"), "--appearance-only requires OUROSETTINGS_TEST_BINARY"
     with tempfile.TemporaryDirectory(prefix="ouroshell-native-") as temporary:
         directory = Path(temporary)
         artifacts = Path(os.environ.get("OUROSHELL_TEST_ARTIFACTS", directory / "artifacts"))
@@ -135,19 +139,37 @@ def main():
         shell = None
         pointer = None
         keyboard = None
+        settings = None
         with (artifacts / "sway.log").open("wb") as sway_log, (artifacts / "shell.log").open("wb") as shell_log:
             compositor = subprocess.Popen(["sway", "-c", str(config), "-d"], env=env, stdout=sway_log, stderr=sway_log)
             try:
                 wait_for(lambda: list(directory.glob("wayland-*.lock")), "headless compositor did not start")
                 env["WAYLAND_DISPLAY"] = str(next(directory.glob("wayland-*.lock")))[:-5]
+                settings_path = directory / "ouro/settings.mcp.sock"
+
+                def set_scheme(scheme):
+                    current = call(settings_path, "settings.get")["structuredContent"]
+                    call(settings_path, "settings.set_section", arguments={
+                        "expected_revision": current["revision"], "section": "appearance",
+                        "value": {"color_scheme": scheme},
+                    })
+
+                if settings_binary := os.environ.get("OUROSETTINGS_TEST_BINARY"):
+                    settings = subprocess.Popen([settings_binary, "--socket", str(settings_path),
+                                                 "--state", str(directory / "settings.json"), "--idle-ms", "300000"],
+                                                env=env, stdout=shell_log, stderr=shell_log)
+                    wait_for(settings_path.exists, "isolated settings daemon did not start")
+                    set_scheme("dark")
                 # A headless seat otherwise loses keyboard capability between
                 # wtype invocations. Keep a device present like a real desktop.
                 keyboard = subprocess.Popen(["wtype", "-s", "600000"], env=env)
                 time.sleep(.2)
-                shell = subprocess.Popen([str(BINARY), "run", str(ROOT / "ouro.json"), "--software"],
+                entry = ROOT / ("src/preview.lua" if appearance_only else "ouro.json")
+                shell = subprocess.Popen([str(BINARY), "run", str(entry), "--software"],
                                          env=env, stdout=shell_log, stderr=shell_log)
                 endpoint = directory / "ourokit/apps/dev.ouro.shell"
-                wait_for(endpoint.exists, "shell MCP socket did not appear")
+                if not appearance_only:
+                    wait_for(endpoint.exists, "shell MCP socket did not appear")
 
                 def capture(name):
                     # Fullscreen software compositing is slower than the small
@@ -162,17 +184,38 @@ def main():
                     subprocess.run(["wtype", "-s", "200", *arguments, "-s", "100"], env=env, check=True)
                     time.sleep(1.5)
 
+                if appearance_only:
+                    capture("preview-dark")
+                    set_scheme("light")
+                    capture("preview-light")
+                    with Image.open(artifacts / "preview-dark.png") as dark, Image.open(artifacts / "preview-light.png") as light:
+                        for point in ((20, 400), (1000, 20)):
+                            assert dark.getpixel(point)[0] < 60 and light.getpixel(point)[0] > 200, ("theme did not change", point)
+                    set_scheme("default")
+                    capture("preview-default")
+                    set_scheme("dark")
+                    capture("preview-dark-again")
+                    for before, after in (("light", "default"), ("dark", "dark-again")):
+                        with Image.open(artifacts / f"preview-{before}.png") as a, Image.open(artifacts / f"preview-{after}.png") as b:
+                            # Omit the blinking input caret, compare the bar,
+                            # controls/results and overlay across transitions.
+                            for region in ((0, 0, 1280, 40), (0, 175, 1280, 800)):
+                                assert a.crop(region).tobytes() == b.crop(region).tobytes(), "theme did not round-trip"
+                    assert (artifacts / "sway.log").read_text().count("new layer surface: namespace ouroshell-preview") == 2, "theme change recreated a layer surface"
+                    print(f"PASS: live dark/light/default palettes and retained surfaces; captures: {artifacts}")
+                    return
+
                 # Geometry specified by the design: 560×620 column centered in
-                # the 1280×760 area below the bar; 54px search + 16px gaps.
+                # the 1280×760 area below the bar; 48px search + 16px gaps.
                 left, top, right = 360, 110, 920
-                first_row = top + 54 + 16 + 39 + 16 + 17 + 5
+                first_row = top + 48 + 16 + 35 + 16 + 18 + 4
 
                 time.sleep(.7)
                 baseline = capture("bar")
                 call(endpoint, "launcher.toggle")
                 capture("launcher")
                 with Image.open(artifacts / "launcher.png") as image:
-                    line_y = top + 54 + 16 + 36
+                    line_y = top + 48 + 16 + 32
                     accent = image.getpixel((left + 18, line_y))
                     assert accent != image.getpixel((left + 150, line_y)), "scope underline collapsed"
                     span = 0
@@ -191,10 +234,23 @@ def main():
                 # The upper five rows must not move when selection moves from
                 # the last visible row to the preceding visible row.
                 with Image.open(artifacts / "scrolled-selection.png") as before, Image.open(artifacts / "selection-up.png") as after:
-                    upper_rows = (left, first_row, right, first_row + 5 * 61)
+                    upper_rows = (left, first_row, right, first_row + 5 * 60)
                     assert before.crop(upper_rows).tobytes() == after.crop(upper_rows).tobytes(), "Up scrolled rows that were already visible"
-                    lower_rows = (left, first_row + 5 * 61, right, first_row + 7 * 61)
+                    lower_rows = (left, first_row + 5 * 60, right, first_row + 7 * 60)
                     assert before.crop(lower_rows).tobytes() != after.crop(lower_rows).tobytes(), "Up did not move the selection highlight"
+                if settings:
+                    set_scheme("light")
+                    capture("search-light")
+                    with Image.open(artifacts / "search-light.png") as light, Image.open(artifacts / "selection-up.png") as dark:
+                        assert light.getpixel((20, 400))[0] > 200 and dark.getpixel((20, 400))[0] < 60, "overlay did not follow appearance"
+                        assert light.getpixel((1000, 20))[0] > 200 and dark.getpixel((1000, 20))[0] < 60, "bar did not follow appearance"
+                    set_scheme("dark")
+                    capture("search-dark-again")
+                    with Image.open(artifacts / "search-dark-again.png") as after, Image.open(artifacts / "selection-up.png") as before:
+                        # Exclude the blinking caret/clock; rows must retain
+                        # query filtering, scroll position and selection.
+                        area = (left, first_row, right, first_row + 7 * 60)
+                        assert before.crop(area).tobytes() == after.crop(area).tobytes(), "retheme changed launcher state"
                 keys("-k", "Down")
                 keys("-k", "Return")
                 wait_for(lambda: launches, "Enter did not launch the selected app")
@@ -304,6 +360,11 @@ def main():
                 keys("-k", "Escape", "-k", "Escape")
                 # Return home after the asynchronous themed icons have loaded.
                 capture("preview")
+                if settings:
+                    set_scheme("light")
+                    capture("preview-light")
+                    set_scheme("dark")
+                    capture("preview-dark")
                 assert len(launches) == 9, "preview sent a real request"
                 print("PASS: native search, uniform overlay tint, uncovered bar, paging, argv/cwd, confirmations, Escape, resize, refocus, clean exit")
                 print(f"Captures: {artifacts}")
@@ -320,6 +381,9 @@ def main():
                 if keyboard:
                     keyboard.terminate()
                     keyboard.wait(timeout=10)
+                if settings:
+                    settings.terminate()
+                    settings.wait(timeout=10)
                 compositor.terminate()
                 compositor.wait(timeout=10)
                 stopping.set()

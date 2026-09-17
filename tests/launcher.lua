@@ -2,6 +2,19 @@ package.path = "src/?.lua;" .. package.path
 
 local tasks = {}
 local ouro = { json = { null = {} }, xdg = { runtime_dir = "/run/user/42", applications = {} }, mcp = {} }
+-- Distinct sentinel values catch copied hex colors instead of catalog usage.
+ouro.tokens = {
+  foundation = {
+    typography_2 = 14, typography_3 = 23, typography_7 = 28, line_height_2 = 20,
+    spacing_1 = 4, spacing_2 = 8, spacing_3 = 15, spacing_4 = 16,
+    spacing_5 = 24, spacing_6 = 32, spacing_8 = 48, radius_2 = 5,
+    border_width_default = 1, border_width_strong = 2,
+  },
+  dark = setmetatable({ background = "#012345FF" }, { __index = function(_, key) return "token:" .. key end }),
+  palette = { transparent = "#00000000", dark = {
+    indigo = { step_6 = "token:indigo6" }, red = { step_11 = "token:red11" },
+  } },
+}
 for _, kind in ipairs({ "box", "row", "column", "scroll", "stack", "image", "text", "button", "text_input", "icon", "layer_surface", "app" }) do
   ouro[kind] = function(props) props.kind = kind; return props end
 end
@@ -11,6 +24,11 @@ ouro.signal = function(value)
 end
 ouro.spawn = function(fn) tasks[#tasks + 1] = fn end
 package.loaded.ouro = ouro
+local scheme = "dark"
+package.loaded.appearance = {
+  colors = function() return ouro.tokens[scheme], ouro.tokens.palette[scheme] end,
+  connect = function() end,
+}
 
 local launcher = require("launcher")
 local entries = {
@@ -60,6 +78,32 @@ local function find(tree, key)
   end
 end
 local tree = launcher.content(state)
+assert(launcher.background() == "#012345E6", "overlay must use theme RGB while retaining its opacity")
+assert(find(tree, "search-shell").background == ouro.tokens.dark.surface)
+assert(find(tree, "search-shell").border == ouro.tokens.dark.input)
+assert(find(tree, "scope-rule").background == ouro.tokens.dark.border)
+local selected = find(tree, "application-code.desktop")
+assert(selected.background == ouro.tokens.dark.accent_selected and selected.border == ouro.tokens.dark.ring)
+assert(selected.foreground == ouro.tokens.dark.foreground and selected.hover == ouro.tokens.dark.accent_hover)
+ouro.tokens.light = setmetatable({ background = "#FEDCBAFF" }, { __index = function(_, key) return "light:" .. key end })
+ouro.tokens.palette.light = { red = { step_11 = "light:red11" } }
+scheme = "light"
+local light_tree = launcher.content(state)
+assert(launcher.background() == "#FEDCBABF", "light overlay must be more transparent than dark")
+assert(find(light_tree, "search-shell").background == "light:surface")
+assert(find(light_tree, "scope-rule").background == "light:border")
+assert(find(light_tree, selected.key).background == "light:accent_selected")
+assert(find(light_tree, "search-" .. state.input_generation()).text == "code", "theme change reset the query")
+state.message:set("Test error")
+assert(find(launcher.content(state), "status").foreground == "light:red11")
+state.message:set(nil)
+scheme = "dark"
+local f = ouro.tokens.foundation
+assert(selected.radius == nil and selected.padding_x == nil, "result rows must use native button radius and padding")
+assert(find(selected, "name").size == f.typography_3 and find(selected, "description").size == f.typography_2)
+assert(find(tree, "search-shell").radius == f.radius_2 and find(tree, "search-shell").height == f.spacing_8)
+assert(find(tree, "content").gap == f.spacing_4 and find(tree, "position").padding == f.spacing_5)
+assert(find(tree, "status").foreground == ouro.tokens.dark.muted_foreground)
 assert(tree.kind == "stack" and #tree.children == 1 and tree.children[1].key == "position")
 assert(find(tree, "vignette") == nil)
 assert(find(tree, "position").width == "fill" and find(tree, "position").height == "fill")
@@ -71,6 +115,10 @@ for _, scope in ipairs({ "all", "apps", "system" }) do
 end
 local input = find(tree, "search-" .. state.input_generation())
 assert(input.autofocus and type(input.on_command) == "function")
+assert(input.font_size == nil and input.height == nil, "search must use native input metrics")
+local tab = find(tree, "scope-apps").children[1]
+assert(tab.height == nil and tab.padding_x == nil and tab.radius == nil and tab.font_size == nil,
+  "scope buttons must use native metrics")
 input.on_command("next"); assert(state.selected() == 1)
 assert(input.placeholder == "Search apps and commands…" and input.label == "Search apps and commands")
 assert(find(tree, "application-code.desktop").background ~= "#00000000")
@@ -104,6 +152,12 @@ for _ = 1, 8 do short_input.on_command("next") end
 assert(state.selected() == 9 and state.first() == 7)
 local short_rows = find(launcher.content(state, 440), "results").children
 assert(#short_rows == 4 and short_rows[4].key == "application-9", "short output hid the selection")
+-- The reserved header/footer plus row gap permits a third row at 419px,
+-- but not 418px. Both sides must still include the selected ninth result.
+local boundary_rows = find(launcher.content(state, 419), "results").children
+assert(#boundary_rows == 4 and boundary_rows[4].key == "application-9")
+boundary_rows = find(launcher.content(state, 418), "results").children
+assert(#boundary_rows == 3 and boundary_rows[3].key == "application-9")
 
 -- Empty All is compact; Apps keeps every application; system search is explicit.
 state.open()
@@ -123,6 +177,11 @@ state.command("submit")
 assert(state.confirming().id == "restart" and state.selected() == 1 and #tasks == before)
 tree = launcher.content(state)
 assert(find(tree, "cancel").background ~= "#00000000")
+for _, key in ipairs({ "cancel", "confirm", "back" }) do
+  local button = find(tree, key)
+  assert(button.height == nil and button.radius == nil and button.padding_x == nil and button.font_size == nil,
+    "confirmation buttons must use native metrics")
+end
 assert(find(tree, "search-" .. state.input_generation()).read_only)
 state.command("submit") -- Enter defaults to Cancel.
 assert(not state.confirming() and #tasks == before)
@@ -164,7 +223,9 @@ assert(#windows() == 2 and windows()[2].id == "launcher")
 assert(windows()[2].keyboard_interactivity == "exclusive")
 assert(windows()[2].width == 0 and windows()[2].height == 0 and #windows()[2].anchors == 4)
 assert(windows()[2].exclusive_zone == 0 and windows()[2].background_effect == "blur")
-assert(windows()[2].background == launcher.background)
+assert(windows()[2].background == launcher.background())
+scheme = "light"
+assert(windows()[2].background == "#FEDCBABF", "mounted overlay must update its background")
 app.actions["launcher.toggle"].handler()
 assert(#windows() == 1 and windows()[1].id == "panel")
 print("PASS: launcher search, scope navigation, safe confirmations, fixed argv, failure states, and full-screen composition")

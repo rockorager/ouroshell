@@ -1,6 +1,7 @@
 local ouro = require("ouro")
 local bar = require("bar")
 local launcher = require("launcher")
+local appearance = require("appearance")
 
 -- This must outlive builds: windows() reads it reactively and never yields.
 local launcher_visible = ouro.signal(false)
@@ -23,8 +24,8 @@ return ouro.app {
       handler = toggle_launcher,
     },
   },
-  theme = { color_scheme = "dark" },
   run = function()
+    appearance.connect()
     local workspaces = ouro.shell.workspaces.connect()
     local clock_format = "%a %b %d  %I:%M %p"
     local clock = ouro.signal(ouro.date(clock_format))
@@ -57,7 +58,7 @@ return ouro.app {
         windows[#windows + 1] = ouro.layer_surface {
           id = "launcher", namespace = "ouroshell-launcher", layer = "overlay",
           width = 0, height = 0, anchors = { "top", "bottom", "left", "right" }, exclusive_zone = 0,
-          background = launcher.background, background_effect = "blur",
+          background = launcher.background(), background_effect = "blur",
           keyboard_interactivity = "exclusive",
           content = function(_, height) return launcher.content(launcher_state, height) end,
         }
