@@ -111,7 +111,7 @@ function M.content(state, time, output, toggle_launcher, power, connectivity)
               ouro.row { key = "workspaces", gap = f.spacing_1, children = items },
             },
           },
-          ouro.row { key = "status", gap = f.spacing_3, cross_alignment = "center", children = status },
+          ouro.row { key = "status", gap = f.spacing_4, cross_alignment = "center", children = status },
         },
       },
     },

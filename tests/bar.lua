@@ -171,7 +171,7 @@ assert(panel.content().children[1].children[3].children[1].text == "minute 2")
 power = { percentage = 12, icon = "battery-caution-symbolic", low = true }
 local status = panel.content().children[1].children[3]
 assert(#status.children == 2 and status.children[1].key == "battery" and status.children[2].key == "clock")
-assert(status.children[1].children[2].text == "12%" and status.gap == ouro.tokens.foundation.spacing_3)
+assert(status.children[1].children[2].text == "12%" and status.gap == ouro.tokens.foundation.spacing_4)
 connectivity = { icon = "network-wireless-signal-good-symbolic", label = "Wi-Fi" }
 status = panel.content().children[1].children[3]
 assert(#status.children == 3 and status.children[1].key == "network" and status.children[2].key == "battery")
