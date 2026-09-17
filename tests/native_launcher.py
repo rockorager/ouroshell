@@ -107,7 +107,8 @@ def main():
             "Exec=hidden-chrome\nNoDisplay=true\n")
         env = dict(os.environ, XDG_RUNTIME_DIR=str(directory), XDG_DATA_HOME=str(data),
                    XDG_DATA_DIRS="/usr/share", WLR_BACKENDS="headless", WLR_HEADLESS_OUTPUTS="1",
-                   WLR_RENDERER="pixman", LIBSEAT_BACKEND="noop")
+                   WLR_RENDERER="pixman", LIBSEAT_BACKEND="noop",
+                   DBUS_SYSTEM_BUS_ADDRESS="unix:path=" + str(directory / "system-bus"))
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("DISPLAY", None)
         launches = []

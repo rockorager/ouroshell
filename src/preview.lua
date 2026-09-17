@@ -2,6 +2,7 @@ local ouro = require("ouro")
 local bar = require("bar")
 local launcher = require("launcher")
 local appearance = require("appearance")
+local network = require("network")
 local selected = ouro.signal("2")
 local time = "Thu Sep 10  04:32 PM"
 local visible = ouro.signal(true)
@@ -21,7 +22,9 @@ local function workspace_content()
       activate = function() selected:set(name) end,
     }
   end
-  return bar.content({ available = true, workspaces = workspaces }, time, nil, toggle)
+  return bar.content({ available = true, workspaces = workspaces }, time, nil, toggle, {
+    percentage = 67, icon = "battery-good-charging-symbolic", charging = true, low = false,
+  }, network.snapshot({ State = 70, Connectivity = 4, PrimaryConnectionType = "802-11-wireless" }, 78))
 end
 
 return ouro.app {

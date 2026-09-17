@@ -1,5 +1,7 @@
 local ouro = require("ouro")
 local appearance = require("appearance")
+local battery = require("battery")
+local network = require("network")
 local f = ouro.tokens.foundation
 
 local M = { height = 40 }
@@ -22,7 +24,7 @@ local function belongs_to_output(workspace, output)
   return false
 end
 
-function M.content(state, time, output, toggle_launcher)
+function M.content(state, time, output, toggle_launcher, power, connectivity)
   local theme, palette = appearance.colors()
   local colors = {
     foreground = theme.sidebar_foreground, muted = theme.muted_foreground,
@@ -78,6 +80,11 @@ function M.content(state, time, output, toggle_launcher)
     }
   end
 
+  local status = {}
+  if connectivity then status[#status + 1] = network.content(connectivity) end
+  if power then status[#status + 1] = battery.content(power) end
+  status[#status + 1] = ouro.text { key = "clock", text = time, size = f.typography_3, max_lines = 1 }
+
   return ouro.box {
     key = "panel-background",
     width = "fill",
@@ -104,7 +111,7 @@ function M.content(state, time, output, toggle_launcher)
               ouro.row { key = "workspaces", gap = f.spacing_1, children = items },
             },
           },
-          ouro.text { key = "clock", text = time, size = f.typography_3, max_lines = 1 },
+          ouro.row { key = "status", gap = f.spacing_3, cross_alignment = "center", children = status },
         },
       },
     },

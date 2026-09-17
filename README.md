@@ -4,8 +4,9 @@ Ouroshell is a Lua desktop shell built on the
 [Ourokit](https://github.com/rockorager/ourokit) runtime.
 
 The shell provides a 40px top bar on every output, with that output's clickable
-workspaces on the left and local date/time on the right. Workspace names sort
-by their leading number, then alphabetically; hidden workspaces are omitted.
+workspaces on the left and network connectivity, battery charge, and local
+date/time on the right. Workspace names sort by their leading number, then
+alphabetically; hidden workspaces are omitted.
 Active workspaces have a rounded blue background and urgent workspaces use red text.
 The workspace list scrolls horizontally when space is tight, leaving room for
 the clock. The round button at the left opens the global launcher.
@@ -13,6 +14,20 @@ the clock. The round button at the left opens the global launcher.
 The clock follows Keywork's format (`Thu Sep 10  04:32 PM`) and refreshes at the
 next minute boundary. Ourokit owns the Wayland connection, rendering, event
 loop, Lua VM, and application lifecycle; this repository contains the shell's Lua.
+
+The battery indicator uses UPower's combined display device over `ouro.dbus`
+on the system bus. Its symbolic icon follows charge/charging state, with the
+icon and percentage turning red for UPower low-battery warnings. It updates
+on property signals, hides when absent or unavailable, and reconnects after
+service or bus loss. No polling command or subprocess bridge is used.
+
+The network indicator uses NetworkManager over `ouro.dbus`, following the
+primary connection and its Wi-Fi access point's signal strength. Ethernet and
+mobile connections have distinct icons; captive portals, limited connectivity,
+and offline states have explicit labels. Internet status comes from
+NetworkManager's connectivity checks, not Wi-Fi association alone. Property
+signals keep it current; it hides during service or bus loss and reconnects.
+This is a status indicator, not a network picker or connection manager.
 
 ## Run
 
@@ -22,6 +37,8 @@ or later: `ouro.time`, `ouro.date`, `ouro.spawn`, edge-to-edge layer content,
 `outputs = "all"` declarations, and `workspace.outputs` membership. The launcher
 also requires layer-surface `background`/`background_effect`, styled boxes,
 text-input `placeholder`/`label`, `ouro.stack`, and image fill dimensions.
+The battery and network indicators require Ourokit's [D-Bus client](https://github.com/rockorager/ourokit/commit/7f7db21c7d05)
+and running UPower and NetworkManager services, respectively.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 
 ```sh
@@ -168,6 +185,8 @@ Run the Lua behavior checks (requires a standalone Lua interpreter):
 lua tests/bar.lua
 lua tests/launcher.lua
 lua tests/appearance.lua
+lua tests/battery.lua
+lua tests/network.lua
 for file in src/*.lua tests/*.lua; do luac -p "$file"; done
 ```
 
@@ -225,5 +244,7 @@ removal when the socket unit stops. It leaves the live shell untouched.
 - `ouro.json` declares the application identity and entrypoint.
 - `src/application.lua` owns the workspace connection, clock task, and panel.
 - `src/bar.lua` renders workspace state and time.
+- `src/battery.lua` owns the UPower subscription and battery indicator.
+- `src/network.lua` owns the NetworkManager subscription and connectivity indicator.
 - `src/launcher.lua` owns launcher search, state, launch policy, and content.
 - `src/preview.lua` supplies interactive visual fixtures.

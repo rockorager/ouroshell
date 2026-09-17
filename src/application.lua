@@ -2,6 +2,8 @@ local ouro = require("ouro")
 local bar = require("bar")
 local launcher = require("launcher")
 local appearance = require("appearance")
+local battery = require("battery")
+local network = require("network")
 
 -- This must outlive builds: windows() reads it reactively and never yields.
 local launcher_visible = ouro.signal(false)
@@ -26,6 +28,8 @@ return ouro.app {
   },
   run = function()
     appearance.connect()
+    local power = battery.connect()
+    local connectivity = network.connect()
     local workspaces = ouro.shell.workspaces.connect()
     local clock_format = "%a %b %d  %I:%M %p"
     local clock = ouro.signal(ouro.date(clock_format))
@@ -49,7 +53,7 @@ return ouro.app {
         exclusive_zone = bar.height,
         keyboard_interactivity = "none",
         content = function(output)
-          return bar.content(workspaces(), clock(), output, toggle_launcher)
+          return bar.content(workspaces(), clock(), output, toggle_launcher, power(), connectivity())
         end,
     }
     return { windows = function()
