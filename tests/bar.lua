@@ -149,6 +149,10 @@ for _, quiet in ipairs({ false, true }) do
   assert(#controls == 2 and controls[1].key == "notifications" and controls[2].key == "clock",
     "bell must be immediately left of the rightmost clock")
   assert(controls[2].text == "test clock")
+  assert(controls[1].padding_x == 0, "bell must not add padding to the status row gap")
+  assert(controls[1].foreground == ouro.tokens.dark.sidebar_foreground)
+  assert(controls[1].children[1].tint == ouro.tokens.dark.sidebar_foreground,
+    "bell must match the normal status icon foreground")
   assert(controls[1].children[1].theme == "Adwaita")
   assert(controls[1].children[1].name == (quiet and "notifications-disabled-symbolic"
     or "preferences-system-notifications-symbolic"))

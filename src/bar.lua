@@ -85,10 +85,11 @@ function M.content(state, time, output, toggle_launcher, power, connectivity, to
   if power then status[#status + 1] = battery.content(power) end
   if toggle_notifications then
     status[#status + 1] = ouro.button { key = "notifications", label = "Open notifications",
-      background = colors.transparent, foreground = colors.muted, hover = colors.hover,
+      padding_x = 0,
+      background = colors.transparent, foreground = colors.foreground, hover = colors.hover,
       on_press = toggle_notifications, children = {
         ouro.xdg.icon { key = "bell", name = quiet and "notifications-disabled-symbolic" or "preferences-system-notifications-symbolic",
-          theme = "Adwaita", tint = colors.muted, width = f.spacing_4, height = f.spacing_4 },
+          theme = "Adwaita", tint = colors.foreground, width = f.spacing_4, height = f.spacing_4 },
       } }
   end
   status[#status + 1] = ouro.text { key = "clock", text = time, size = f.typography_3, max_lines = 1 }
