@@ -170,6 +170,7 @@ ouro.shell = { workspaces = { connect = function() return function() return stat
 local power, connectivity
 require("battery").connect = function() return function() return power end end
 require("network").connect = function() return function() return connectivity end end
+require("notifications").connect = function() end
 local app = dofile("src/application.lua")
 assert(app.theme == nil, "shell must inherit the host theme")
 local running = app.run()
@@ -179,27 +180,35 @@ assert(panel.height == 40 and panel.exclusive_zone == 40)
 assert(panel.outputs == "all" and panel.output == nil)
 assert(workspace_items(panel.content("DP-1"))[1].text == "No workspaces",
   "application did not pass the native output name to the bar")
-assert(panel.content().children[1].children[3].children[1].text == "minute 1")
+assert(panel.content().children[1].children[3].children[2].text == "minute 1")
 assert(delay == 1000, "clock did not align with the next minute")
 now = 120
 assert(coroutine.resume(spawned))
 assert(delay == 60000)
-assert(panel.content().children[1].children[3].children[1].text == "minute 2")
+assert(panel.content().children[1].children[3].children[2].text == "minute 2")
 power = { percentage = 12, icon = "battery-caution-symbolic", low = true }
 local status = panel.content().children[1].children[3]
-assert(#status.children == 2 and status.children[1].key == "battery" and status.children[2].key == "clock")
+assert(#status.children == 3 and status.children[1].key == "battery" and status.children[3].key == "clock")
 assert(status.children[1].children[2].text == "12%" and status.gap == ouro.tokens.foundation.spacing_4)
 connectivity = { icon = "network-wireless-signal-good-symbolic", label = "Wi-Fi" }
 status = panel.content().children[1].children[3]
-assert(#status.children == 3 and status.children[1].key == "network" and status.children[2].key == "battery")
-assert(#status.children[1].children == 1 and status.children[3].key == "clock")
+assert(#status.children == 4 and status.children[1].key == "network" and status.children[2].key == "battery")
+assert(#status.children[1].children == 1 and status.children[4].key == "clock")
+assert(status.children[3].key == "notifications", "bell must be immediately left of the clock")
 assert(status.children[1].children[1].name == connectivity.icon)
 connectivity = nil
 power = nil
-assert(#panel.content().children[1].children[3].children == 1, "missing battery left an empty indicator")
+assert(#panel.content().children[1].children[3].children == 2, "missing battery left an empty indicator")
+local bell = panel.content().children[1].children[3].children[1]
+assert(bell.key == "notifications" and bell.children[1].name == "preferences-system-notifications-symbolic")
+bell.on_press()
+assert(running.windows()[2].id == "notifications")
 assert(app.actions["launcher.toggle"].inputSchema.type == "object")
 panel.content().children[1].children[1].on_press()
 assert(#running.windows() == 2 and running.windows()[2].id == "launcher")
+app.actions["notifications.toggle"].handler()
+assert(#running.windows() == 2 and running.windows()[2].id == "notifications")
+app.actions["launcher.toggle"].handler()
 app.actions["launcher.toggle"].handler()
 assert(#running.windows() == 1)
 print("PASS: workspace ordering, visibility, activation, states, and minute-aligned clock")

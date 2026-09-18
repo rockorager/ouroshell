@@ -187,6 +187,7 @@ lua tests/launcher.lua
 lua tests/appearance.lua
 lua tests/battery.lua
 lua tests/network.lua
+lua tests/notifications.lua
 for file in src/*.lua tests/*.lua; do luac -p "$file"; done
 ```
 
@@ -202,6 +203,76 @@ preview cannot launch applications, lock, log out, or power off:
 
 ```sh
 ../ourokit/zig-out/bin/ouroctl run src/preview.lua --software
+```
+
+## Notifications
+
+Ouroshell owns `org.freedesktop.Notifications` through `ouro.dbus`. The bar's bell
+opens a right-edge notification center; `notifications.toggle` does the same
+through MCP. New notifications show a popup without taking keyboard focus.
+Do Not Disturb suppresses popups but keeps history. Both views follow the system
+theme and support dismissal, grouped history and app-provided actions.
+
+Popups use a single surface with an app header. Named app icons keep their
+original colors; the `desktop-entry` hint selects an installed application's
+icon, with the supplied icon or matching app name as fallbacks. Without icon
+metadata, the header shows just the app name. Raw image hints and absolute icon
+paths are not supported.
+
+History is one scrollable virtual list, with separate variable-height rows for
+app headers and notifications. Group counts cover all retained items. Collapsing
+a group removes its message rows; stable row keys preserve the visible scroll
+anchor when other messages change. There are no page controls.
+
+The whole surface of a notification with a live default action is clickable,
+including its header and padding, without an inner hover highlight. Close and
+app-supplied buttons handle their own clicks. Keyboard focus remains visible.
+This requires an Ourokit build with content-sized (`height = "auto"`) buttons.
+
+Clicking a notification with a default action requests an XDG activation token
+from that input event. Ouroshell sends `ActivationToken` to the notifying client
+before `ActionInvoked`. The client must consume the token and activate its
+window; Ouro switches to that window's workspace, reveals it if minimized and
+focuses it. Notifications without a default action have no implicit app-launch
+fallback. Expired notifications remain readable but cannot invoke stale actions.
+
+The daemon supports replacement, expiration, critical/resident/transient hints,
+and notification closure signals. It advertises plain-text bodies and actions,
+not markup or embedded images. History and DND are in memory only. History is
+limited to 100 entries, actions to four per notification, and
+pending expiry timers to 64. Critical notifications do not expire automatically.
+
+Run the real D-Bus, click, theme and cross-workspace activation checks on a
+private headless desktop with Sway, Grim, Python Pillow and PyGObject installed:
+
+```sh
+OUROSETTINGS_TEST_BINARY=../ourosettings/zig-out/bin/ourosettings \
+  python3 tests/native_notification_service.py
+```
+
+There is also a separate, interactive fixture preview. It requires Ourokit's
+native `ouro.switch` control for Do Not Disturb:
+
+```sh
+../ourokit/zig-out/bin/ouroctl run src/notification-preview.lua
+```
+
+It opens a 420px right-edge panel on the compositor-selected output and follows
+the system theme. Expand/collapse app groups, dismiss individual samples, or
+clear history. **Try a popup** briefly replaces the panel with a sample toast;
+after about six seconds it returns to history. Do Not Disturb suppresses sample
+popups without discarding history. **Reset preview** restores the fixtures; the
+header close button exits the preview. Sample actions only show feedback.
+
+The fixture preview never owns `org.freedesktop.Notifications` or changes the
+live daemon. Its clock is app-scoped; production expiration tasks belong to the
+D-Bus export scope so removing a popup cannot cancel them.
+
+Run its native pointer, popup, and theme checks on a private headless desktop:
+
+```sh
+OUROSETTINGS_TEST_BINARY=../ourosettings/zig-out/bin/ourosettings \
+  python3 tests/native_notifications.py
 ```
 
 Run the native integration test with `sway`, `grim`, `wtype`, and Python's

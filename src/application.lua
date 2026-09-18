@@ -4,15 +4,25 @@ local launcher = require("launcher")
 local appearance = require("appearance")
 local battery = require("battery")
 local network = require("network")
+local notifications = require("notifications")
 
 -- This must outlive builds: windows() reads it reactively and never yields.
 local launcher_visible = ouro.signal(false)
 local launcher_state
+local notices = notifications.new(function() return launcher_state and launcher_state.entries() or {} end)
 
 local function dismiss_launcher() launcher_visible:set(false) end
 local function toggle_launcher()
+  notices.close_center()
+  notices.popup:set(nil)
   if not launcher_visible() and launcher_state then launcher_state.open() end
   launcher_visible:set(not launcher_visible())
+  return {}
+end
+
+local function toggle_notifications()
+  dismiss_launcher()
+  notices.toggle()
   return {}
 end
 
@@ -25,9 +35,16 @@ return ouro.app {
       outputSchema = { type = "object", properties = {}, additionalProperties = false },
       handler = toggle_launcher,
     },
+    ["notifications.toggle"] = {
+      description = "Show or dismiss the notification center.",
+      inputSchema = { type = "object", properties = {}, additionalProperties = false },
+      outputSchema = { type = "object", properties = {}, additionalProperties = false },
+      handler = toggle_notifications,
+    },
   },
   run = function()
     appearance.connect()
+    notifications.connect(notices)
     local power = battery.connect()
     local connectivity = network.connect()
     local workspaces = ouro.shell.workspaces.connect()
@@ -53,7 +70,7 @@ return ouro.app {
         exclusive_zone = bar.height,
         keyboard_interactivity = "none",
         content = function(output)
-          return bar.content(workspaces(), clock(), output, toggle_launcher, power(), connectivity())
+          return bar.content(workspaces(), clock(), output, toggle_launcher, power(), connectivity(), toggle_notifications, notices.quiet())
         end,
     }
     return { windows = function()
@@ -66,6 +83,9 @@ return ouro.app {
           keyboard_interactivity = "exclusive",
           content = function(_, height) return launcher.content(launcher_state, height) end,
         }
+      else
+        local notification_window = notifications.window(notices)
+        if notification_window then windows[#windows + 1] = notification_window end
       end
       return windows
     end }
