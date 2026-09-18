@@ -190,7 +190,8 @@ def main():
                     set_scheme("light")
                     capture("preview-light")
                     with Image.open(artifacts / "preview-dark.png") as dark, Image.open(artifacts / "preview-light.png") as light:
-                        for point in ((20, 400), (1000, 20)):
+                        assert dark.getpixel((20, 400)) == light.getpixel((20, 400)), "backdrop tint changed with theme"
+                        for point in ((350, 400), (1000, 20)):
                             assert dark.getpixel(point)[0] < 60 and light.getpixel(point)[0] > 200, ("theme did not change", point)
                     set_scheme("default")
                     capture("preview-default")
@@ -206,8 +207,8 @@ def main():
                     print(f"PASS: live dark/light/default palettes and retained surfaces; captures: {artifacts}")
                     return
 
-                # Geometry specified by the design: 560×620 column centered in
-                # the 1280×760 area below the bar; 48px search + 16px gaps.
+                # The 592×652 padded frame preserves the centered 560×620
+                # content area below the bar; 48px search + 16px gaps.
                 left, top, right = 360, 110, 920
                 first_row = top + 48 + 16 + 35 + 16 + 18 + 4
 
@@ -216,6 +217,15 @@ def main():
                 call(endpoint, "launcher.toggle")
                 capture("launcher")
                 with Image.open(artifacts / "launcher.png") as image:
+                    backdrop = image.getpixel((20, 400))[:3]
+                    # #111113 at 77/255 opacity over the #608099 desktop.
+                    expected = tuple(round(bg * 178 / 255 + tint * 77 / 255)
+                                     for bg, tint in zip((96, 128, 153), (17, 17, 19)))
+                    assert all(abs(a - b) <= 1 for a, b in zip(backdrop, expected)), (backdrop, expected)
+                    card = (24, 25, 27) if settings else (255, 255, 255)
+                    assert image.getpixel((350, 400))[:3] == card, "frame must be opaque"
+                    assert image.getpixel((344, 94))[:3] == backdrop, "frame corner must be rounded"
+                    assert image.getpixel((640, 94))[:3] == card, "frame top edge missing"
                     line_y = top + 48 + 16 + 32
                     accent = image.getpixel((left + 18, line_y))
                     assert accent != image.getpixel((left + 150, line_y)), "scope underline collapsed"
@@ -243,7 +253,9 @@ def main():
                     set_scheme("light")
                     capture("search-light")
                     with Image.open(artifacts / "search-light.png") as light, Image.open(artifacts / "selection-up.png") as dark:
-                        assert light.getpixel((20, 400))[0] > 200 and dark.getpixel((20, 400))[0] < 60, "overlay did not follow appearance"
+                        assert light.getpixel((20, 400)) == dark.getpixel((20, 400)), "backdrop tint changed with theme"
+                        assert light.getpixel((350, 400))[:3] == (255, 255, 255), "light card is not opaque"
+                        assert dark.getpixel((350, 400))[:3] == (24, 25, 27), "dark card is not opaque"
                         assert light.getpixel((1000, 20))[0] > 200 and dark.getpixel((1000, 20))[0] < 60, "bar did not follow appearance"
                     set_scheme("dark")
                     capture("search-dark-again")
@@ -367,7 +379,7 @@ def main():
                     set_scheme("dark")
                     capture("preview-dark")
                 assert len(launches) == 9, "preview sent a real request"
-                print("PASS: native search, uniform overlay tint, uncovered bar, paging, argv/cwd, confirmations, Escape, resize, refocus, clean exit")
+                print("PASS: native search, opaque rounded card, 30% dark backdrop, uncovered bar, paging, argv/cwd, confirmations, Escape, resize, refocus, clean exit")
                 print(f"Captures: {artifacts}")
             finally:
                 if pointer:

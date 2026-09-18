@@ -7,7 +7,7 @@ ouro.tokens = {
   foundation = {
     typography_2 = 14, typography_3 = 23, typography_7 = 28, line_height_2 = 20,
     spacing_1 = 4, spacing_2 = 8, spacing_3 = 15, spacing_4 = 16,
-    spacing_5 = 24, spacing_6 = 32, spacing_8 = 48, radius_2 = 5,
+    spacing_5 = 24, spacing_6 = 32, spacing_8 = 48, radius_2 = 5, radius_6 = 17,
     border_width_default = 1, border_width_strong = 2,
   },
   dark = setmetatable({ background = "#012345FF" }, { __index = function(_, key) return "token:" .. key end }),
@@ -78,7 +78,7 @@ local function find(tree, key)
   end
 end
 local tree = launcher.content(state)
-assert(launcher.background() == "#012345E6", "overlay must use theme RGB while retaining its opacity")
+assert(launcher.background() == "#0123454D", "overlay must use dark RGB at 30% opacity")
 assert(find(tree, "search-shell").background == ouro.tokens.dark.surface)
 assert(find(tree, "search-shell").border == ouro.tokens.dark.input)
 assert(find(tree, "scope-rule").background == ouro.tokens.dark.border)
@@ -89,7 +89,8 @@ ouro.tokens.light = setmetatable({ background = "#FEDCBAFF" }, { __index = funct
 ouro.tokens.palette.light = { red = { step_11 = "light:red11" } }
 scheme = "light"
 local light_tree = launcher.content(state)
-assert(launcher.background() == "#FEDCBABF", "light overlay must be more transparent than dark")
+assert(launcher.background() == "#0123454D", "light mode must retain the same dark translucent backdrop")
+assert(find(light_tree, "palette").background == "light:card")
 assert(find(light_tree, "search-shell").background == "light:surface")
 assert(find(light_tree, "scope-rule").background == "light:border")
 assert(find(light_tree, selected.key).background == "light:accent_selected")
@@ -107,7 +108,10 @@ assert(find(tree, "status").foreground == ouro.tokens.dark.muted_foreground)
 assert(tree.kind == "stack" and #tree.children == 1 and tree.children[1].key == "position")
 assert(find(tree, "vignette") == nil)
 assert(find(tree, "position").width == "fill" and find(tree, "position").height == "fill")
-assert(find(tree, "palette").background == nil and find(tree, "palette").surface == nil)
+local frame = find(tree, "palette")
+assert(frame.background == ouro.tokens.dark.card and frame.radius == f.radius_6)
+assert(frame.padding == f.spacing_4 and frame.width == 592 and frame.height == 652,
+  "frame must surround, not shrink, the original content area")
 assert(find(tree, "results-scroll").flex == 1)
 for _, scope in ipairs({ "all", "apps", "system" }) do
   assert(find(tree, "scope-" .. scope).cross_alignment == "stretch",
@@ -149,14 +153,15 @@ assert(state.selected() == 1 and state.first() == 1 and #state.results() == 0)
 state.change("App")
 local short_input = find(launcher.content(state, 440), "search-" .. state.input_generation())
 for _ = 1, 8 do short_input.on_command("next") end
-assert(state.selected() == 9 and state.first() == 7)
+assert(state.selected() == 9 and state.first() == 8)
 local short_rows = find(launcher.content(state, 440), "results").children
-assert(#short_rows == 4 and short_rows[4].key == "application-9", "short output hid the selection")
--- The reserved header/footer plus row gap permits a third row at 419px,
--- but not 418px. Both sides must still include the selected ninth result.
-local boundary_rows = find(launcher.content(state, 419), "results").children
+assert(#short_rows == 3 and short_rows[3].key == "application-9", "short output hid the selection")
+-- The padded frame and reserved chrome permit a third row at 451px,
+-- but not 450px. Both sides must still include the selected ninth result.
+state.first:set(7)
+local boundary_rows = find(launcher.content(state, 451), "results").children
 assert(#boundary_rows == 4 and boundary_rows[4].key == "application-9")
-boundary_rows = find(launcher.content(state, 418), "results").children
+boundary_rows = find(launcher.content(state, 450), "results").children
 assert(#boundary_rows == 3 and boundary_rows[3].key == "application-9")
 
 -- Empty All is compact; Apps keeps every application; system search is explicit.
@@ -225,7 +230,7 @@ assert(windows()[2].width == 0 and windows()[2].height == 0 and #windows()[2].an
 assert(windows()[2].exclusive_zone == 0 and windows()[2].background_effect == "blur")
 assert(windows()[2].background == launcher.background())
 scheme = "light"
-assert(windows()[2].background == "#FEDCBABF", "mounted overlay must update its background")
+assert(windows()[2].background == "#0123454D", "mounted overlay must retain its dark tint in light mode")
 app.actions["launcher.toggle"].handler()
 assert(#windows() == 1 and windows()[1].id == "panel")
 print("PASS: launcher search, scope navigation, safe confirmations, fixed argv, failure states, and full-screen composition")

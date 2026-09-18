@@ -5,15 +5,15 @@ local f = ouro.tokens.foundation
 local M = {}
 local visible_rows = 7
 -- Layout dimensions shared by rendering and keyboard paging. Result rows
--- accommodate two text lines; the palette remains the chosen 560x620 layout.
+-- accommodate two text lines; the frame surrounds the 560x620 content area.
 local row_height, palette_height = 56, 620
 local search_height, tab_height = f.spacing_8, f.spacing_6
+local frame_padding = f.spacing_4
 
 function M.background()
-  local theme = appearance.colors()
-  -- Let more of the backdrop show through the light overlay.
-  local alpha = theme == ouro.tokens.light and "BF" or "E6"
-  return theme.background:sub(1, 7) .. alpha
+  -- The opaque card carries contrast; keep the blurred backdrop light-touch
+  -- and dark-tinted even when the content uses the light palette.
+  return ouro.tokens.dark.background:sub(1, 7) .. "4D"
 end
 
 -- These are shell-owned actions, never commands supplied by search text.
@@ -310,7 +310,7 @@ function M.content(state, height)
   -- callbacks receive configured logical dimensions; no layout-time mutation.
   local scopes_height = tab_height + f.border_width_strong + f.border_width_default
   local chrome_height = search_height + scopes_height + 3 * f.spacing_4 + 2 * f.line_height_2
-  local available = math.min(palette_height, (height or 760) - 2 * f.spacing_5) - chrome_height - heading_space
+  local available = math.min(palette_height, (height or 760) - 2 * (f.spacing_5 + frame_padding)) - chrome_height - heading_space
   local capacity = math.max(1, math.min(visible_rows, math.floor((available + f.spacing_1) / (row_height + f.spacing_1))))
   local first = math.max(1, math.min(state.first(), #results - capacity + 1))
   if state.selected() < first then first = state.selected()
@@ -352,7 +352,8 @@ function M.content(state, height)
   end
   return ouro.stack { key = "launcher", children = {
     ouro.box { key = "position", width = "fill", height = "fill", padding = f.spacing_5, alignment = "center", children = {
-      ouro.box { key = "palette", width = 560, height = palette_height, children = {
+      ouro.box { key = "palette", width = 560 + 2 * frame_padding, height = palette_height + 2 * frame_padding,
+        padding = frame_padding, background = theme.card, radius = f.radius_6, children = {
         ouro.column { key = "content", gap = f.spacing_4, cross_alignment = "stretch", children = {
           ouro.box { key = "search-shell", width = "fill", height = search_height, alignment = "center",
             background = colors.input, border = colors.input_border, border_width = f.border_width_default, radius = f.radius_2, children = {

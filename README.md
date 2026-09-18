@@ -103,9 +103,10 @@ journalctl --user -u dev.ouro.shell.service
 ## Global launcher
 
 Click the bar's launcher button or call `launcher.toggle` on the shell's Ourokit
-MCP socket. A uniform translucent tint fills the selected output below the bar,
-without a gradient or enclosing card. Its opacity is controlled by the alpha
-channel of `launcher.background` in `src/launcher.lua` (currently 90%).
+MCP socket. An opaque, theme-colored card with rounded corners surrounds the
+content. A uniform dark translucent tint fills the selected output below the
+bar in both light and dark mode. Its opacity is controlled by the alpha channel
+of `launcher.background` in `src/launcher.lua` (currently 30%).
 Real backdrop blur is requested through `ext-background-effect-v1`; compositors
 without it show the tint without blur.
 
@@ -192,7 +193,8 @@ for file in src/*.lua tests/*.lua; do luac -p "$file"; done
 ```
 
 The bar and launcher follow ourosettings' `appearance.color_scheme` live,
-including custom control colors and the uniform translucent overlay. `default`
+including custom control colors and the opaque card; the translucent backdrop
+stays dark in both themes. `default`
 uses the light palette, matching Ourokit. Settings outages retain the last
 palette and reconnect without clearing launcher state.
 
