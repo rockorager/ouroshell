@@ -13,6 +13,7 @@ ouro.tokens = {
   dark = setmetatable({ background = "#012345FF" }, { __index = function(_, key) return "token:" .. key end }),
   palette = { transparent = "#00000000", dark = {
     indigo = { step_6 = "token:indigo6" }, red = { step_11 = "token:red11" },
+    slate = { step_3 = "token:slate3", step_6 = "token:slate6" },
   } },
 }
 for _, kind in ipairs({ "box", "row", "column", "scroll", "stack", "image", "text", "button", "text_input", "icon", "layer_surface", "app" }) do
@@ -86,11 +87,13 @@ local selected = find(tree, "application-code.desktop")
 assert(selected.background == ouro.tokens.dark.accent_selected and selected.border == ouro.tokens.dark.ring)
 assert(selected.foreground == ouro.tokens.dark.foreground and selected.hover == ouro.tokens.dark.accent_hover)
 ouro.tokens.light = setmetatable({ background = "#FEDCBAFF" }, { __index = function(_, key) return "light:" .. key end })
-ouro.tokens.palette.light = { red = { step_11 = "light:red11" } }
+ouro.tokens.palette.light = { red = { step_11 = "light:red11" }, slate = { step_6 = "light:slate6" } }
 scheme = "light"
 local light_tree = launcher.content(state)
 assert(launcher.background() == "#0123454D", "light mode must retain the same dark translucent backdrop")
 assert(find(light_tree, "palette").background == "light:card")
+assert(find(light_tree, "palette").border == "light:slate6")
+assert(find(light_tree, "shadow").bytes == find(tree, "shadow").bytes, "theme change must retain the shadow asset")
 assert(find(light_tree, "search-shell").background == "light:surface")
 assert(find(light_tree, "scope-rule").background == "light:border")
 assert(find(light_tree, selected.key).background == "light:accent_selected")
@@ -105,12 +108,14 @@ assert(find(selected, "name").size == f.typography_3 and find(selected, "descrip
 assert(find(tree, "search-shell").radius == f.radius_2 and find(tree, "search-shell").height == f.spacing_8)
 assert(find(tree, "content").gap == f.spacing_4 and find(tree, "position").padding == f.spacing_5)
 assert(find(tree, "status").foreground == ouro.tokens.dark.muted_foreground)
-assert(tree.kind == "stack" and #tree.children == 1 and tree.children[1].key == "position")
+assert(tree.kind == "stack" and #tree.children == 2 and tree.children[1].key == "shadow" and tree.children[2].key == "position")
+assert(find(tree, "shadow").alt == "" and find(tree, "shadow").fit == "fill")
 assert(find(tree, "vignette") == nil)
 assert(find(tree, "position").width == "fill" and find(tree, "position").height == "fill")
 local frame = find(tree, "palette")
-assert(frame.background == ouro.tokens.dark.card and frame.radius == f.radius_6)
-assert(frame.padding == f.spacing_4 and frame.width == 592 and frame.height == 652,
+assert(frame.background == "token:slate3" and frame.border == "token:slate6" and frame.radius == f.radius_6)
+assert(frame.border_width == f.border_width_default)
+assert(frame.padding + frame.border_width == f.spacing_4 and frame.width == 592 and frame.height == 652,
   "frame must surround, not shrink, the original content area")
 assert(find(tree, "results-scroll").flex == 1)
 for _, scope in ipairs({ "all", "apps", "system" }) do
@@ -229,6 +234,11 @@ assert(windows()[2].keyboard_interactivity == "exclusive")
 assert(windows()[2].width == 0 and windows()[2].height == 0 and #windows()[2].anchors == 4)
 assert(windows()[2].exclusive_zone == 0 and windows()[2].background_effect == "blur")
 assert(windows()[2].background == launcher.background())
+local narrow = windows()[2].content(500, 440)
+assert(find(narrow, "palette").width == 452 and find(narrow, "palette").height == 392)
+assert(find(narrow, "shadow").bytes:find('width="500" height="440"', 1, true))
+assert(find(narrow, "shadow").bytes:find('x="24" y="32" width="452" height="392"', 1, true),
+  "shadow must track the clamped frame with an 8px downward offset")
 scheme = "light"
 assert(windows()[2].background == "#0123454D", "mounted overlay must retain its dark tint in light mode")
 app.actions["launcher.toggle"].handler()

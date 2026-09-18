@@ -80,6 +80,25 @@ def call(path, name, allow_error=False, arguments=None):
         return reply["result"]
 
 
+def check_frame(image, dark):
+    width, height = image.size
+    left = (width - min(592, width - 48)) // 2
+    top = 40 + (height - 40 - min(652, height - 88)) // 2
+    bottom = height - (top - 40)
+    center = width // 2
+    card = (33, 34, 37) if dark else (255, 255, 255)
+    rim = (54, 58, 63) if dark else (217, 217, 224)
+    assert image.getpixel((left + 8, top + 100))[:3] == card, "frame must be opaque"
+    assert image.getpixel((center, top))[:3] == rim, "frame must have a 1px rim"
+    assert image.getpixel((center, top + 1))[:3] == card, "rim must not grow into the content"
+    assert image.getpixel((left, top))[:3] not in (card, rim), "frame corner must be rounded"
+    # A downward shadow is stronger below than above, then fades outward.
+    upper = image.getpixel((center, top - 4))[0]
+    lower = image.getpixel((center, bottom + 4))[0]
+    outer = image.getpixel((center, bottom + 16))[0]
+    assert lower < upper and lower < outer, ("missing, hard-edged or misaligned shadow", upper, lower, outer)
+
+
 def main():
     appearance_only = "--appearance-only" in sys.argv
     if appearance_only:
@@ -186,10 +205,15 @@ def main():
                     time.sleep(1.5)
 
                 if appearance_only:
+                    # The shadow and themed icons decode asynchronously on
+                    # first presentation; warm them before round-trip checks.
+                    time.sleep(2)
                     capture("preview-dark")
                     set_scheme("light")
                     capture("preview-light")
                     with Image.open(artifacts / "preview-dark.png") as dark, Image.open(artifacts / "preview-light.png") as light:
+                        check_frame(dark, True)
+                        check_frame(light, False)
                         assert dark.getpixel((20, 400)) == light.getpixel((20, 400)), "backdrop tint changed with theme"
                         for point in ((350, 400), (1000, 20)):
                             assert dark.getpixel(point)[0] < 60 and light.getpixel(point)[0] > 200, ("theme did not change", point)
@@ -204,7 +228,20 @@ def main():
                             for region in ((0, 0, 1280, 40), (0, 175, 1280, 800)):
                                 assert a.crop(region).tobytes() == b.crop(region).tobytes(), "theme did not round-trip"
                     assert (artifacts / "sway.log").read_text().count("new layer surface: namespace ouroshell-preview") == 2, "theme change recreated a layer surface"
-                    print(f"PASS: live dark/light/default palettes and retained surfaces; captures: {artifacts}")
+                    # Exercise the frame at both clamped dimensions, then
+                    # capture a non-default page without executing an action.
+                    sway_socket = next(directory.glob("sway-ipc.*.sock"))
+                    subprocess.run(["swaymsg", "-s", str(sway_socket), "output HEADLESS-1 mode 500x480"],
+                                   check=True, capture_output=True)
+                    capture("preview-narrow")
+                    with Image.open(artifacts / "preview-narrow.png") as image:
+                        check_frame(image, True)
+                    keys("reboot", "-k", "Return")
+                    capture("preview-narrow-confirmation")
+                    with Image.open(artifacts / "preview-narrow-confirmation.png") as image:
+                        check_frame(image, True)
+                    assert not launches, "preview sent a real request"
+                    print(f"PASS: raised frame, soft shadow, resize, live dark/light/default palettes and retained surfaces; captures: {artifacts}")
                     return
 
                 # The 592×652 padded frame preserves the centered 560×620
@@ -222,10 +259,7 @@ def main():
                     expected = tuple(round(bg * 178 / 255 + tint * 77 / 255)
                                      for bg, tint in zip((96, 128, 153), (17, 17, 19)))
                     assert all(abs(a - b) <= 1 for a, b in zip(backdrop, expected)), (backdrop, expected)
-                    card = (24, 25, 27) if settings else (255, 255, 255)
-                    assert image.getpixel((350, 400))[:3] == card, "frame must be opaque"
-                    assert image.getpixel((344, 94))[:3] == backdrop, "frame corner must be rounded"
-                    assert image.getpixel((640, 94))[:3] == card, "frame top edge missing"
+                    check_frame(image, settings is not None)
                     line_y = top + 48 + 16 + 32
                     accent = image.getpixel((left + 18, line_y))
                     assert accent != image.getpixel((left + 150, line_y)), "scope underline collapsed"
@@ -255,7 +289,7 @@ def main():
                     with Image.open(artifacts / "search-light.png") as light, Image.open(artifacts / "selection-up.png") as dark:
                         assert light.getpixel((20, 400)) == dark.getpixel((20, 400)), "backdrop tint changed with theme"
                         assert light.getpixel((350, 400))[:3] == (255, 255, 255), "light card is not opaque"
-                        assert dark.getpixel((350, 400))[:3] == (24, 25, 27), "dark card is not opaque"
+                        assert dark.getpixel((350, 400))[:3] == (33, 34, 37), "dark card is not opaque"
                         assert light.getpixel((1000, 20))[0] > 200 and dark.getpixel((1000, 20))[0] < 60, "bar did not follow appearance"
                     set_scheme("dark")
                     capture("search-dark-again")
@@ -305,7 +339,7 @@ def main():
                         assert bar.crop((0, 0, 1000, 40)).tobytes() == image.crop((0, 0, 1000, 40)).tobytes(), "launcher covered the bar"
                         bounds = ImageChops.difference(bar.convert("RGB"), image.convert("RGB")).crop((0, 40, 1280, 800)).getbbox()
                         assert bounds == (0, 0, 1280, 760), (state, bounds)
-                        assert image.getpixel((940, 400)) == image.getpixel((20, 400)) == image.getpixel((640, 60)), "overlay tint is not uniform"
+                        assert image.getpixel((1040, 400)) == image.getpixel((20, 400)) == image.getpixel((640, 44)), "overlay tint away from the shadow is not uniform"
                     with Image.open(artifacts / "launcher.png") as original, Image.open(artifacts / f"{state}.png") as image:
                         # Compare only the pill's top border, not query or caret.
                         border = (left + 40, top, right - 40, top + 2)

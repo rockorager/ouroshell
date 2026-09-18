@@ -81,7 +81,7 @@ return ouro.app {
           width = 0, height = 0, anchors = { "top", "bottom", "left", "right" }, exclusive_zone = 0,
           background = launcher.background(), background_effect = "blur",
           keyboard_interactivity = "exclusive",
-          content = function(_, height) return launcher.content(launcher_state, height) end,
+          content = function(width, height) return launcher.content(launcher_state, height, width) end,
         }
       else
         local notification_window = notifications.window(notices)

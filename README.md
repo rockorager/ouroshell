@@ -104,9 +104,12 @@ journalctl --user -u dev.ouro.shell.service
 
 Click the bar's launcher button or call `launcher.toggle` on the shell's Ourokit
 MCP socket. An opaque, theme-colored card with rounded corners surrounds the
-content. A uniform dark translucent tint fills the selected output below the
-bar in both light and dark mode. Its opacity is controlled by the alpha channel
-of `launcher.background` in `src/launcher.lua` (currently 30%).
+content. A lighter charcoal face in dark mode, a fine rim, and a soft downward
+shadow separate the card from the desktop. The shadow uses a decorative SVG
+through Ourokit's image renderer. A uniform dark translucent tint fills the
+selected output below the bar in both light and dark mode. Its opacity is
+controlled by the alpha channel of `launcher.background` in `src/launcher.lua`
+(currently 30%).
 Real backdrop blur is requested through `ext-background-effect-v1`; compositors
 without it show the tint without blur.
 

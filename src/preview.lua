@@ -58,7 +58,7 @@ return ouro.app {
           id = "launcher", namespace = "ouroshell-preview-launcher", layer = "overlay",
           width = 0, height = 0, anchors = { "top", "bottom", "left", "right" },
           background = launcher.background(), background_effect = "blur", keyboard_interactivity = "exclusive",
-          content = function(_, height) return launcher.content(launcher_state, height) end,
+          content = function(width, height) return launcher.content(launcher_state, height, width) end,
         }
       end
       return windows

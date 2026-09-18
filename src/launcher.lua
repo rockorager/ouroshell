@@ -290,8 +290,20 @@ local function confirmation(state, colors)
   return ouro.column { key = "confirmation", gap = f.spacing_4, cross_alignment = "stretch", children = children }
 end
 
-function M.content(state, height)
+function M.content(state, height, width)
+  height, width = height or 760, width or 1280
   local theme, palette = appearance.colors()
+  local frame_width = math.min(560 + 2 * frame_padding, width - 2 * f.spacing_5)
+  local frame_height = math.min(palette_height + 2 * frame_padding, height - 2 * f.spacing_5)
+  -- Ourokit has no box-shadow primitive. Rasterize a decorative SVG behind
+  -- the card, using the actual viewport so the shadow also follows resizing.
+  local shadow = string.format([[<svg xmlns="http://www.w3.org/2000/svg" width="%g" height="%g">
+    <defs><filter id="shadow" x="-50%%" y="-50%%" width="200%%" height="200%%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter></defs>
+    <rect x="%g" y="%g" width="%g" height="%g" rx="%g" fill="black" fill-opacity="0.4" filter="url(#shadow)"/>
+  </svg>]], width, height, (width - frame_width) / 2, (height - frame_height) / 2 + f.spacing_2,
+    frame_width, frame_height, f.radius_6)
   local colors = {
     selected = theme.accent_selected, selected_border = theme.ring,
     foreground = theme.foreground, muted = theme.muted_foreground,
@@ -310,7 +322,7 @@ function M.content(state, height)
   -- callbacks receive configured logical dimensions; no layout-time mutation.
   local scopes_height = tab_height + f.border_width_strong + f.border_width_default
   local chrome_height = search_height + scopes_height + 3 * f.spacing_4 + 2 * f.line_height_2
-  local available = math.min(palette_height, (height or 760) - 2 * (f.spacing_5 + frame_padding)) - chrome_height - heading_space
+  local available = frame_height - 2 * frame_padding - chrome_height - heading_space
   local capacity = math.max(1, math.min(visible_rows, math.floor((available + f.spacing_1) / (row_height + f.spacing_1))))
   local first = math.max(1, math.min(state.first(), #results - capacity + 1))
   if state.selected() < first then first = state.selected()
@@ -351,9 +363,12 @@ function M.content(state, height)
     elseif state.phase() == "error" then status = "Applications unavailable. System actions are still available." end
   end
   return ouro.stack { key = "launcher", children = {
+    ouro.image { key = "shadow", bytes = shadow, width = "fill", height = "fill", fit = "fill", alt = "" },
     ouro.box { key = "position", width = "fill", height = "fill", padding = f.spacing_5, alignment = "center", children = {
-      ouro.box { key = "palette", width = 560 + 2 * frame_padding, height = palette_height + 2 * frame_padding,
-        padding = frame_padding, background = theme.card, radius = f.radius_6, children = {
+      ouro.box { key = "palette", width = frame_width, height = frame_height,
+        padding = frame_padding - f.border_width_default, radius = f.radius_6,
+        background = theme == ouro.tokens.dark and palette.slate.step_3 or theme.card,
+        border = palette.slate.step_6, border_width = f.border_width_default, children = {
         ouro.column { key = "content", gap = f.spacing_4, cross_alignment = "stretch", children = {
           ouro.box { key = "search-shell", width = "fill", height = search_height, alignment = "center",
             background = colors.input, border = colors.input_border, border_width = f.border_width_default, radius = f.radius_2, children = {
