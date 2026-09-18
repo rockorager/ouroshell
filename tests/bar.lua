@@ -142,6 +142,19 @@ ouro.xdg = { runtime_dir = "/run/user/42", icon = ouro.icon, applications = {
   list = function() return {} end,
   prepare_launch = function() return {} end,
 } }
+local opened = false
+for _, quiet in ipairs({ false, true }) do
+  local controls = bar.content(state, "test clock", nil, nil, nil, nil,
+    function() opened = true end, quiet).children[1].children[3].children
+  assert(#controls == 2 and controls[1].key == "notifications" and controls[2].key == "clock",
+    "bell must be immediately left of the rightmost clock")
+  assert(controls[2].text == "test clock")
+  assert(controls[1].children[1].theme == "Adwaita")
+  assert(controls[1].children[1].name == (quiet and "notifications-disabled-symbolic"
+    or "preferences-system-notifications-symbolic"))
+  controls[1].on_press()
+end
+assert(opened, "bell must invoke the notification toggle")
 ouro.mcp = { call = function() return { result = {} } end }
 ouro.spawn = function(fn)
   local task = coroutine.create(fn)
