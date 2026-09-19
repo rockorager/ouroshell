@@ -1,5 +1,6 @@
 local ouro = require("ouro")
 local center = require("notification_center")
+local notification_image = require("notification_image")
 local M = {}
 local interface = "org.freedesktop.Notifications"
 local path = "/org/freedesktop/Notifications"
@@ -25,7 +26,7 @@ function M.new(applications)
   return state
 end
 
-local function resolve_app_icon(state, app, supplied, desktop_entry)
+local function resolve_app_icon(state, app, desktop_entry)
   local function named(value)
     return type(value) == "string" and value ~= "" and not value:find("/", 1, true) and value or nil
   end
@@ -33,12 +34,11 @@ local function resolve_app_icon(state, app, supplied, desktop_entry)
   if desktop_entry then
     local id = desktop_entry:gsub("%.desktop$", "") .. ".desktop"
     for _, entry in ipairs(entries) do
-      if entry.id == id and not entry.hidden and named(entry.icon) then return entry.icon end
+      if entry.id == id and not entry.hidden and named(entry.icon) then return { name = entry.icon } end
     end
   end
-  if named(supplied) then return supplied end
   for _, entry in ipairs(entries) do
-    if not entry.hidden and entry.name:lower() == app:lower() and named(entry.icon) then return entry.icon end
+    if not entry.hidden and entry.name:lower() == app:lower() and named(entry.icon) then return { name = entry.icon } end
   end
 end
 
@@ -129,8 +129,6 @@ function M.export(bus, state)
           elseif pair[1] == "transient" and hint.signature == "b" then transient = hint.value
           elseif pair[1] == "desktop-entry" and hint.signature == "s" then desktop_entry = hint.value end
         end
-        local delay = urgency == 2 and 0 or (timeout == -1 and 6000 or timeout)
-        if delay > 0 and timers >= 64 then return limited("Too many pending expiration timers") end
         local buttons, keys = {}, {}
         for index = 1, #actions, 2 do
           local key, label = actions[index], actions[index + 1]
@@ -139,13 +137,17 @@ function M.export(bus, state)
           keys[key] = true
           buttons[#buttons + 1] = { key = key, label = display(label == "" and "Open" or label, 64) }
         end
+        local image = notification_image.load(hints, app_icon) or resolve_app_icon(state, app, desktop_entry)
+        -- Import yields. Check live IDs, history and timer capacity afterwards.
+        local delay = urgency == 2 and 0 or (timeout == -1 and 6000 or timeout)
+        if delay > 0 and timers >= 64 then return limited("Too many pending expiration timers") end
         local replacement = active[replaces] and replaces or nil
         if not replacement and #state.items() >= 100 then
           finish(state.items()[#state.items()].id, 4, false, true)
         end
         local item = state.add({ app = display(app == "" and "Application" or app, 64),
           title = display(title == "" and "Notification" or title, 128), body = display(body, 1024),
-          icon = resolve_app_icon(state, app, app_icon, desktop_entry),
+          image = image,
           actions = buttons, urgent = urgency == 2, resident = resident, transient = transient,
           sender = request.sender, default_action = keys.default == true,
         }, replacement)

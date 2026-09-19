@@ -9,13 +9,13 @@ local expires = 0
 local function reset()
   state.clear()
   state.collapsed:set({ Files = true, CI = true })
-  state.add { app = "CI", icon = "utilities-terminal-symbolic", title = "Build failed",
+  state.add { app = "CI", image = { name = "utilities-terminal-symbolic" }, title = "Build failed",
     body = "ouro / main — 2 tests need attention.", action = "View logs", urgent = true }
-  state.add { app = "Files", icon = "folder-symbolic", title = "Upload complete",
+  state.add { app = "Files", image = { name = "folder-symbolic" }, title = "Upload complete",
     body = "design-assets.zip is ready to share.", action = "Open folder" }
-  state.add { app = "Messages", icon = "user-available-symbolic", title = "Taylor",
+  state.add { app = "Messages", image = { name = "user-available-symbolic" }, title = "Taylor",
     body = "Pushed the latest changes. Take a look when you have a minute." }
-  state.add { app = "Messages", icon = "user-available-symbolic", title = "Alex",
+  state.add { app = "Messages", image = { name = "user-available-symbolic" }, title = "Alex",
     body = "Coffee after the build?", action = "Open" }
   message:set("Nothing here changes your real notifications.")
 end
@@ -26,7 +26,7 @@ local function activate(item)
 end
 
 local function sample()
-  local item = state.add { app = "Messages", icon = "user-available-symbolic", title = "Alex",
+  local item = state.add { app = "Messages", image = { name = "user-available-symbolic" }, title = "Alex",
     body = "Found a table by the window. See you in five?", action = "Open" }
   if state.quiet() then
     message:set("Do Not Disturb: saved to history without a popup.")

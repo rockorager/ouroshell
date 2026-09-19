@@ -192,6 +192,8 @@ lua tests/appearance.lua
 lua tests/battery.lua
 lua tests/network.lua
 lua tests/notifications.lua
+lua tests/notification_service.lua
+lua tests/notification_image.lua
 for file in src/*.lua tests/*.lua; do luac -p "$file"; done
 ```
 
@@ -218,11 +220,26 @@ through MCP. New notifications show a popup without taking keyboard focus.
 Do Not Disturb suppresses popups but keeps history. Both views follow the system
 theme and support dismissal, grouped history and app-provided actions.
 
-Popups use a single surface with an app header. Named app icons keep their
-original colors; the `desktop-entry` hint selects an installed application's
-icon, with the supplied icon or matching app name as fallbacks. Without icon
-metadata, the header shows just the app name. Raw image hints and absolute icon
-paths are not supported.
+Popups use a single surface with one image/icon slot in the app header. The
+selection follows the notification specification: `image-data`, then
+`image-path`, then `app_icon`, then deprecated `icon_data`. The legacy
+`image_data` and `image_path` aliases also work; modern spellings win within
+each kind. If none supplies an image, the `desktop-entry` hint or a matching
+application name can supply a named icon from the installed catalog.
+
+Raw image data accepts RGB/RGBA8 pixels, including padded rows and alpha.
+`image-path` and `app_icon` accept a local absolute path, local `file://` URI,
+or named icon. A website/PWA notification image takes the place of Chrome's
+icon, rather than appearing alongside it. The sender name can still be Chrome.
+History shows each notification's selected image beside its title; group
+headings show only the application name and count, never a shared site image.
+Without image metadata there is no placeholder slot.
+
+This requires Ourokit's `ouro.images.load` API. File reads and decoding run off
+the UI thread, with a 4 MiB input limit and maximum dimensions of 1024×1024.
+Images are retained as thumbnails up to 128px per side, so history survives
+temporary-file deletion. Remote URIs, symlinks, non-regular files, malformed
+images and oversized images are ignored without rejecting notification text.
 
 History is one scrollable virtual list, with separate variable-height rows for
 app headers and notifications. Group counts cover all retained items. Collapsing
@@ -243,9 +260,9 @@ fallback. Expired notifications remain readable but cannot invoke stale actions.
 
 The daemon supports replacement, expiration, critical/resident/transient hints,
 and notification closure signals. It advertises plain-text bodies and actions,
-not markup or embedded images. History and DND are in memory only. History is
-limited to 100 entries, actions to four per notification, and
-pending expiry timers to 64. Critical notifications do not expire automatically.
+not markup or body-image attachments. History and DND are in memory only.
+History is limited to 100 entries, actions to four per notification, and pending
+expiry timers to 64. Critical notifications do not expire automatically.
 
 Run the real D-Bus, click, theme and cross-workspace activation checks on a
 private headless desktop with Sway, Grim, Python Pillow and PyGObject installed:

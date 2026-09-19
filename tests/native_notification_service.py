@@ -30,6 +30,10 @@ def main():
         icon.paste("#24bacc", (0, 0, 12, 12))
         icon.paste("#29b77b", (12, 12, 24, 24))
         icon.save(data / "icons/fixture-chat.png")
+        path_image = Image.new("RGB", (48, 48), "#ffd000")
+        path_image.paste("#0055ff", (29, 0, 48, 48))
+        path_fixture = directory / "history image #1.png"
+        path_image.save(path_fixture)
         env = dict(os.environ, XDG_RUNTIME_DIR=temporary, WLR_BACKENDS="headless",
                    XDG_DATA_HOME=str(data),
                    WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER="pixman", LIBSEAT_BACKEND="noop",
@@ -146,6 +150,21 @@ def main():
                             f"{name}: bell must be left of clock"
                         assert groups[1][0] - right <= 22, f"{name}: bell adds extra padding before clock"
                     return 780 + (left + right) // 2
+
+                def color_count(image, box, expected, tolerance=18):
+                    pixels = image.convert("RGB").crop(box).getdata()
+                    return sum(all(abs(pixel[channel] - expected[channel]) <= tolerance for channel in range(3))
+                               for pixel in pixels)
+
+                def padded_raw(width, height, rgba_rows):
+                    rowstride = width * 4 + 8
+                    encoded = bytearray()
+                    for y in range(height):
+                        encoded.extend(rgba_rows(y))
+                        encoded.extend(b"padding!")
+                    assert len(encoded) == rowstride * height
+                    return GLib.Variant("(iiibiiay)",
+                        (width, height, rowstride, True, 8, 4, bytes(encoded)))
 
                 first = notify("Downloading…", timeout=1000)
                 assert notify("Download complete", replaces=first, actions="['open', 'Open file']") == first
@@ -300,6 +319,101 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                 pump()
                 assert not any(member == "ActionInvoked" and args[0] == expired for member, args in received), "expired notification invoked an action"
                 call(endpoint, "notifications.toggle")
+
+                # Raw image-data is padded deliberately: tightly packed test
+                # data would not catch a loader which ignores rowstride. The
+                # transparent magenta quadrant also checks that alpha is used.
+                current = call(settings_path, "settings.get")["structuredContent"]
+                call(settings_path, "settings.set_section", arguments={"expected_revision": current["revision"],
+                    "section": "appearance", "value": {"color_scheme": "light"}})
+                def raw_row(y):
+                    pixels = bytearray()
+                    for x in range(48):
+                        if y < 24 and x < 31: pixel = (244, 25, 18, 255)
+                        elif y < 24: pixel = (20, 210, 55, 255)
+                        elif x < 31: pixel = (12, 45, 238, 128)
+                        else: pixel = (255, 0, 255, 0)
+                        pixels.extend(pixel)
+                    return pixels
+                raw = notify("Padded RGBA image", app_name="Team chat", app_icon="",
+                    hints={
+                        # Valid raw data beats a valid path, and the modern key
+                        # beats the legacy raw key even though it is later.
+                        "image_data": GLib.Variant("(iiibiiay)", (48, 48, 144, False, 8, 3,
+                            bytes((255, 208, 0)) * 48 * 48)),
+                        "image-path": GLib.Variant("s", path_fixture.as_uri()),
+                        "image-data": padded_raw(48, 48, raw_row),
+                    })
+                capture("image-raw-popup-light")
+                with Image.open(artifacts / "image-raw-popup-light.png") as image:
+                    popup_box = (857, 68, 881, 92)
+                    assert color_count(image, popup_box, (244, 25, 18)) > 80, "modern raw red pixels missing from header"
+                    assert color_count(image, popup_box, (20, 210, 55)) > 40, "padded raw row was decoded incorrectly"
+                    assert color_count(image, popup_box, (255, 208, 0)) == 0, "legacy raw or competing path won precedence"
+                    assert color_count(image, popup_box, (255, 0, 255)) == 0, "transparent raw pixels were rendered opaque"
+                    blue = image.convert("RGB").crop(popup_box).getdata()
+                    assert sum(b > r + 45 and b > g + 45 and b < 245 for r, g, b in blue) > 80, \
+                        "semi-transparent blue pixels did not preserve alpha"
+                    assert color_count(image, (844, 96, 1265, 230), (244, 25, 18)) == 0, "second image slot remains"
+                method("CloseNotification", raw)
+
+                current = call(settings_path, "settings.get")["structuredContent"]
+                call(settings_path, "settings.set_section", arguments={"expected_revision": current["revision"],
+                    "section": "appearance", "value": {"color_scheme": "dark"}})
+                path_notice = notify("Chrome download image", timeout=800, app_name="Chrome", app_icon="fixture-chat",
+                    hints={
+                        "desktop-entry": GLib.Variant("s", "fixture-chat"),
+                        "image_path": GLib.Variant("s", "/definitely/missing/legacy-image.png"),
+                        "image-path": GLib.Variant("s", path_fixture.as_uri()),
+                    })
+                # Notify must own the encoded image before replying.
+                path_fixture.unlink()
+                capture("image-path-popup-dark")
+                with Image.open(artifacts / "image-path-popup-dark.png") as image:
+                    assert color_count(image, (857, 68, 881, 92), (255, 208, 0)) > 180, "image-path did not replace app_icon in header"
+                    assert color_count(image, (844, 48, 1265, 230), (223, 40, 96)) == 0, "app icon rendered alongside selected image"
+                    assert color_count(image, (844, 96, 1265, 230), (255, 208, 0)) == 0, "second image slot remains"
+                call(endpoint, "notifications.toggle")
+                signal("NotificationClosed", path_notice, "uint32 1")
+                capture("image-path-history-after-unlink-dark")
+                with Image.open(artifacts / "image-path-history-after-unlink-dark.png") as image:
+                    assert color_count(image, (850, 256, 1255, 410), (255, 208, 0)) > 180, \
+                        "history lost copied image bytes after source unlink"
+                    assert color_count(image, (850, 210, 1255, 256), (255, 208, 0)) == 0, "group borrowed its newest notification's image"
+                call(endpoint, "notifications.toggle")
+                for title, bad_path in (("Remote image ignored", "https://example.invalid/image.png"),
+                                        ("Missing image ignored", "/definitely/missing/image.png")):
+                    broken = notify(title, hints={"image-path": GLib.Variant("s", bad_path)})
+                    name = title.lower().replace(" ", "-")
+                    capture(name)
+                    notify(title, replaces=broken)
+                    capture(name + "-plain")
+                    with Image.open(artifacts / f"{name}.png") as actual, Image.open(artifacts / f"{name}-plain.png") as plain:
+                        assert not ImageChops.difference(actual, plain).crop((844, 48, 1265, 230)).getbbox(), \
+                            "invalid image changed the text-only notification"
+                    method("CloseNotification", broken)
+                named = notify("Named notification image", app_name="Image fixture", app_icon="",
+                    hints={"image_path": GLib.Variant("s", "fixture-chat")})
+                capture("image-named-popup-dark")
+                with Image.open(artifacts / "image-named-popup-dark.png") as image:
+                    assert color_count(image, (857, 68, 881, 92), (223, 40, 96)) > 150, \
+                        "legacy named image hint did not render the notification image"
+                method("CloseNotification", named)
+
+                # A file-backed app_icon must beat deprecated icon_data, while
+                # icon_data still works if no modern image or app_icon exists.
+                app_icon_file = directory / "app icon.png"
+                path_image.save(app_icon_file)
+                for name, supplied, expected in (("file-app-icon", app_icon_file.as_uri(), (255, 208, 0)),
+                                                 ("deprecated-icon-data", "", (244, 25, 18))):
+                    notice = notify(name, app_name="Chrome", app_icon=supplied,
+                        hints={"desktop-entry": GLib.Variant("s", "fixture-chat"),
+                               "icon_data": padded_raw(48, 48, raw_row)})
+                    capture(name)
+                    with Image.open(artifacts / f"{name}.png") as image:
+                        assert color_count(image, (857, 68, 881, 92), expected) > 80, "single-slot fallback order is wrong"
+                    method("CloseNotification", notice)
+
                 oldest = notify("Oldest retained message", app_name="History fixture", body="End of history.",
                                 actions="['inspect', 'Inspect oldest']")
                 retained = []

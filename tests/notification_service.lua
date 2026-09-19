@@ -96,6 +96,19 @@ assert(state.items()[1].urgent and #tasks == 4, "critical notification must not 
 state.clear()
 assert(#state.items() == 0)
 
+ouro.images = { load = function(options)
+  if options.path == "/tmp/site.png" then return "retained-image-bytes" end
+end }
+id = notify(nil, 1, { { "image-path", { signature = "s", value = "/tmp/site.png" } } })[1]
+assert(state.popup().image.bytes == "retained-image-bytes")
+resume(#tasks)
+assert(state.popup() == nil and state.items()[1].image.bytes == "retained-image-bytes",
+  "expiry must retain the notification image with history")
+id = notify(nil, 0, { { "image-path", { signature = "s", value = "/tmp/site.png" } } })[1]
+notify(id, 0)
+assert(state.items()[1].image == nil, "replacement without an image must clear the old image")
+state.clear()
+
 result, err = notify(nil, -2)
 assert(result == nil and err.name:find("InvalidArgs"))
 assert(not notify(nil, 0, nil, { "odd" }))
@@ -123,18 +136,24 @@ local icons = service.new(function() return {
   { id = "empty.desktop", name = "Empty", icon = {} },
 } end)
 service.export(bus, icons)
-local function notify_icon(app, supplied, desktop_entry)
-  local hints = desktop_entry and { { "desktop-entry", { signature = "s", value = desktop_entry } } } or {}
+local function notify_icon(app, supplied, desktop_entry, hints)
+  hints = hints or {}
+  if desktop_entry then hints[#hints + 1] = { "desktop-entry", { signature = "s", value = desktop_entry } } end
   assert(methods.Notify.handler { sender = ":1.42", args = { app, 0, supplied, "Title", "Body", {}, hints, 0 } })
-  return icons.items()[1].icon
+  local image = icons.items()[1].image
+  return image and (image.name or image.bytes)
 end
-assert(notify_icon("Different display name", "folder-symbolic", "slack") == "slack",
-  "desktop-entry must select the real application icon, not a notification category")
+assert(notify_icon("Different display name", "folder-symbolic", "slack") == "folder-symbolic",
+  "desktop-entry must not override an explicit app_icon")
+assert(notify_icon("Slack", "file:///tmp/site.png", "slack") == "retained-image-bytes")
+assert(notify_icon("Slack", "folder-symbolic", "slack",
+  { { "image-path", { signature = "s", value = "/tmp/site.png" } } }) == "retained-image-bytes",
+  "image-path must precede both app_icon and desktop-entry")
 assert(notify_icon("Different display name", "", "slack.desktop") == "slack")
 assert(notify_icon("sLaCk", "", nil) == "slack", "app name should fall back to the installed catalog")
 assert(notify_icon("Unknown", "mail-unread-symbolic", nil) == "mail-unread-symbolic")
 assert(notify_icon("Unknown", "", "missing") == nil, "missing metadata must not manufacture a bell icon")
 assert(notify_icon("Hidden", "", "hidden") == nil)
 assert(notify_icon("Empty", "", "empty") == nil)
-assert(notify_icon("Unknown", "/tmp/untrusted.png", nil) == nil, "file paths are not named icons")
+assert(notify_icon("Unknown", "/tmp/untrusted.png", nil) == nil, "unloadable files must not produce an image")
 print("PASS: notification IDs, replacement timers, closure reasons, actions, hints, DND, UTF-8, history and limits")

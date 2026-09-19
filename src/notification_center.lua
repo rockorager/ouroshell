@@ -37,7 +37,7 @@ function M.new()
     for _, item in ipairs(state.items()) do
       local group = by_app[item.app]
       if not group then
-        group = { app = item.app, icon = item.icon, items = {} }
+        group = { app = item.app, items = {} }
         by_app[item.app] = group
         groups[#groups + 1] = group
       end
@@ -61,6 +61,17 @@ local function icon_button(key, label, name, callback)
     children = { icon("icon", name, theme.muted_foreground) } }
 end
 
+local function notification_image(image)
+  local props = { key = "notification-image", width = f.spacing_5, height = f.spacing_5,
+    fit = "contain", alt = "Notification image" }
+  if image.bytes then
+    props.bytes = image.bytes
+    return ouro.image(props)
+  end
+  props.name, props.theme = image.name, "Adwaita"
+  return ouro.xdg.icon(props)
+end
+
 local function notification_surface(item, key, surface, radius, content, activate)
   local theme, palette = appearance.colors()
   local props = { key = key, radius = radius,
@@ -80,11 +91,12 @@ end
 
 function M.card(item, dismiss, activate)
   local theme = appearance.colors()
+  local heading = {}
+  if item.image then heading[#heading + 1] = notification_image(item.image) end
+  heading[#heading + 1] = ouro.text { key = "title", text = item.title, size = f.typography_3, max_lines = 2, flex = 1 }
+  heading[#heading + 1] = icon_button("dismiss", "Dismiss " .. item.title, "window-close-symbolic", dismiss)
   local children = {
-    ouro.row { key = "heading", gap = f.spacing_2, cross_alignment = "center", children = {
-      ouro.text { key = "title", text = item.title, size = f.typography_3, max_lines = 2, flex = 1 },
-      icon_button("dismiss", "Dismiss " .. item.title, "window-close-symbolic", dismiss),
-    } },
+    ouro.row { key = "heading", gap = f.spacing_2, cross_alignment = "center", children = heading },
   }
   if item.body ~= "" then
     children[#children + 1] = ouro.text { key = "body", text = item.body, size = f.typography_2,
@@ -126,9 +138,6 @@ function M.content(state, callbacks)
       if row.group then
         local group = row.group
         local heading = {}
-        if group.icon then heading[#heading + 1] = ouro.xdg.icon {
-          key = "app-icon", name = group.icon, theme = "Adwaita", width = f.spacing_4, height = f.spacing_4,
-        } end
         heading[#heading + 1] = ouro.text { key = "app", text = group.app, size = f.typography_2, flex = 1 }
         heading[#heading + 1] = ouro.text { key = "count", text = tostring(#group.items), size = f.typography_1,
           foreground = theme.muted_foreground }
@@ -204,9 +213,7 @@ end
 function M.popup(item, callbacks)
   local theme = appearance.colors()
   local heading = {}
-  if item.icon then heading[#heading + 1] = ouro.xdg.icon {
-    key = "app-icon", name = item.icon, theme = "Adwaita", width = f.spacing_5, height = f.spacing_5,
-  } end
+  if item.image then heading[#heading + 1] = notification_image(item.image) end
   heading[#heading + 1] = ouro.text { key = "name", text = item.app, size = f.typography_2,
     foreground = theme.muted_foreground, flex = 1, max_lines = 1 }
   heading[#heading + 1] = ouro.button { key = "dismiss", label = "Dismiss " .. item.title,

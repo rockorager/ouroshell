@@ -7,7 +7,7 @@ local ouro = { tokens = {
 ouro.signal = function(value)
   return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
 end
-for _, name in ipairs({ "app", "layer_surface", "row", "column", "box", "scroll", "virtual_list", "text", "button", "switch" }) do
+for _, name in ipairs({ "app", "layer_surface", "row", "column", "box", "scroll", "virtual_list", "text", "button", "switch", "image" }) do
   ouro[name] = function(props) return props end
 end
 ouro.xdg.icon = function(props) return props end
@@ -55,7 +55,7 @@ local function find(tree, key)
   end
 end
 local activated, dismissed
-local popup_item = { id = 42, app = "Slack", icon = "slack", title = "Alex", body = "A message",
+local popup_item = { id = 42, app = "Slack", image = { name = "slack" }, title = "Alex", body = "A message",
   default_action = true, urgent = true, actions = { { key = "default", label = "Open" }, { key = "reply", label = "Reply" } } }
 local popup = center.popup(popup_item, {
   dismiss = function() dismissed = true end, activate = function(key) activated = key end,
@@ -67,7 +67,7 @@ local function surfaces(tree)
 end
 assert(surfaces(popup) == 1 and popup.border == "amber", "popup must have one surface and retain urgent styling")
 assert(not find(popup, "time") and not find(popup, "notification-42"), "popup must not wrap a history card")
-assert(find(popup, "app-icon").name == "slack" and find(popup, "app-icon").tint == nil,
+assert(find(popup, "notification-image").name == "slack" and find(popup, "notification-image").tint == nil,
   "app icons must keep their original colors")
 assert(find(popup, "body").max_lines == 2)
 assert(not find(popup, "action-1"), "default action must not create an extra button")
@@ -87,12 +87,30 @@ card.on_press()
 assert(activated == "default")
 find(card, "action-2").on_press()
 assert(activated == "reply")
-popup_item.icon, popup_item.body, popup_item.default_action, popup_item.actions = nil, "", false, {}
+popup_item.image = { bytes = "notification-png" }
 popup = center.popup(popup_item, {})
-assert(not find(popup, "app-icon") and not find(popup, "body") and not find(popup, "open"))
+assert(not find(popup, "app-icon") and not find(popup, "illustrated-message"), "must render only one image slot")
+assert(find(popup, "notification-image").bytes == "notification-png")
+assert(find(popup, "notification-image").fit == "contain" and find(popup, "notification-image").tint == nil)
+assert(find(popup, "app").children[1].key == "notification-image", "selected image belongs in the header")
+assert(find(center.card(popup_item), "notification-image").bytes == "notification-png")
+popup_item.image = { name = "mail-unread" }
+assert(find(center.popup(popup_item, {}), "notification-image").name == "mail-unread")
+popup_item.image = nil
+popup_item.body, popup_item.default_action, popup_item.actions = "", false, {}
+popup = center.popup(popup_item, {})
+assert(not find(popup, "notification-image") and not find(popup, "body") and not find(popup, "open"))
 assert(popup.on_press == nil and popup.surface == "sidebar", "non-actionable notifications must not be click targets")
 assert(center.card(popup_item).on_press == nil, "expired history must not be a click target")
 assert(find(popup, "app").children[1].key == "name", "no icon must leave no placeholder slot")
+local image_history = center.new()
+image_history.add { app = "Chrome", title = "First", body = "", image = { bytes = "site-one" } }
+image_history.add { app = "Chrome", title = "Second", body = "", image = { bytes = "site-two" } }
+local image_rows = find(center.content(image_history, { message = function() return "" end }), "history")
+assert(not find(image_rows.render_item(1), "notification-image"), "group must not inherit a notification's image")
+assert(find(image_rows.render_item(2), "notification-image").bytes == "site-two")
+assert(find(image_rows.render_item(3), "notification-image").bytes == "site-one",
+  "each notification must retain its own image within an application group")
 local app = dofile("src/notification-preview.lua")
 local running = app.run()
 assert(coroutine.resume(tasks[1]))
