@@ -19,6 +19,7 @@ ouro.tokens = {
 for _, kind in ipairs({ "box", "row", "column", "scroll", "stack", "image", "text", "button", "text_input", "icon", "layer_surface", "app" }) do
   ouro[kind] = function(props) props.kind = kind; return props end
 end
+ouro.component = function(initialize) return function(props) return initialize(props)() end end
 ouro.xdg.icon = ouro.icon
 ouro.signal = function(value)
   return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })

@@ -15,6 +15,7 @@ local ouro = { tokens = {
 for _, kind in ipairs({ "box", "row", "column", "scroll", "text", "button", "text_input", "icon", "app", "layer_surface" }) do
   ouro[kind] = function(props) props.kind = kind; return props end
 end
+ouro.component = function(initialize) return function(props) return initialize(props)() end end
 package.loaded.ouro = ouro
 local scheme = "dark"
 package.loaded.appearance = {

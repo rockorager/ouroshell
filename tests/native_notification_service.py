@@ -20,10 +20,17 @@ def main():
         artifacts = Path(os.environ.get("OUROSHELL_TEST_ARTIFACTS", directory / "artifacts"))
         artifacts.mkdir(parents=True, exist_ok=True)
         config = directory / "sway.conf"
-        config.write_text("output * mode 1280x800\noutput * bg #608099 solid_color\nseat seat0 fallback true\nfocus_on_window_activation focus\n")
+        config.write_text("output * mode 1280x800\noutput * bg #608099 solid_color\nseat seat0 fallback true\nseat seat0 xcursor_theme test-invisible 24\nfocus_on_window_activation focus\n")
         data = directory / "data"
         (data / "applications").mkdir(parents=True)
         (data / "icons").mkdir()
+        # A transparent Xcursor fixture excludes the software cursor from
+        # pixel comparisons without hiding the pointer (which sends leave).
+        cursors = data / "icons/test-invisible/cursors"
+        cursors.mkdir(parents=True)
+        (cursors / "left_ptr").write_bytes(struct.pack("=17I",
+            0x72756358, 16, 0x10000, 1, 0xfffd0002, 24, 28,
+            36, 0xfffd0002, 24, 1, 1, 1, 0, 0, 0, 0))
         (data / "applications/fixture-chat.desktop").write_text(
             "[Desktop Entry]\nType=Application\nName=Fixture Chat\nIcon=fixture-chat\nExec=true\n")
         icon = Image.new("RGB", (24, 24), "#df2860")
@@ -36,6 +43,7 @@ def main():
         path_image.save(path_fixture)
         env = dict(os.environ, XDG_RUNTIME_DIR=temporary, WLR_BACKENDS="headless",
                    XDG_DATA_HOME=str(data),
+                   XCURSOR_PATH=str(data / "icons"), XCURSOR_THEME="test-invisible",
                    WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER="pixman", LIBSEAT_BACKEND="noop",
                    DBUS_SESSION_BUS_ADDRESS=f"unix:path={directory}/bus",
                    DBUS_SYSTEM_BUS_ADDRESS=f"unix:path={directory}/no-system-bus")
@@ -51,7 +59,11 @@ def main():
             try:
                 start(["dbus-daemon", "--session", "--nofork", f"--address={env['DBUS_SESSION_BUS_ADDRESS']}"])
                 wait_for((directory / "bus").exists, "private bus missing")
+                # Trace at the libwayland server: Ourokit's native wayring
+                # client does not implement libwayland's WAYLAND_DEBUG flag.
+                env["WAYLAND_DEBUG"] = "server"
                 start(["sway", "-c", str(config)])
+                del env["WAYLAND_DEBUG"]
                 wait_for(lambda: list(directory.glob("wayland-*.lock")), "headless Sway missing")
                 env["WAYLAND_DISPLAY"] = str(next(directory.glob("wayland-*.lock")))[:-5]
                 wait_for(lambda: list(directory.glob("sway-ipc.*.sock")), "private IPC missing")
@@ -107,13 +119,58 @@ def main():
                         return expected in received
                     wait_for(found, str(expected))
 
-                def click(x, y):
-                    for command in (f"seat seat0 cursor set {x} {y}", "seat seat0 cursor press button1",
-                                    "seat seat0 cursor release button1", "seat seat0 cursor set 0 0"):
+                def hover(x, y):
+                    subprocess.run(["swaymsg", "-s", ipc, f"seat seat0 cursor set {x} {y}"], env=env, check=True, stdout=log)
+                    time.sleep(.2)
+
+                def click(x, y, leave=True):
+                    # Let newly mapped/replaced cards settle, then enter the
+                    # target even when successive clicks use the same point.
+                    hover(0, 0)
+                    hover(x, y)
+                    commands = ["seat seat0 cursor press button1", "seat seat0 cursor release button1"]
+                    if leave: commands.append("seat seat0 cursor set 0 0")
+                    for command in commands:
                         result = json.loads(subprocess.check_output(["swaymsg", "-s", ipc, "-t", "command", command], env=env))
                         assert all(item["success"] for item in result), result
                         time.sleep(.05)
                     time.sleep(.3)
+
+                def popup_geometry():
+                    # xdg_popup.configure is in parent-surface coordinates.
+                    # Both shell layers are top-right anchored with these
+                    # margins; read menu size/placement from the compositor.
+                    trace = (artifacts / "native.log").read_text()
+                    # libwayland versions use either @ or # before object IDs.
+                    events = list(re.finditer(r"xdg_popup[@#](\d+)\.configure\((-?\d+), (-?\d+), (\d+), (\d+)\)", trace))
+                    if not events:
+                        return None
+                    event = events[-1]
+                    identity, x, y, width, height = map(int, event.groups())
+                    if re.search(rf"xdg_popup[@#]{identity}\.(?:destroy|popup_done)\(", trace[event.end():]):
+                        return None
+                    return 1280 - 420 - 16 + x, 56 + y, width, height
+
+                def select_menu(index):
+                    geometry = popup_geometry()
+                    assert geometry, "expected a mapped native xdg_popup"
+                    x, y, width, height = geometry
+                    click(x + width // 2, y + 5 + 32 * index + 16)
+
+                def keys(*names):
+                    # Keep each virtual keyboard alive: removing the current
+                    # device makes Sway publish an empty keymap mid-traversal.
+                    start(["wtype", "-s", "100", *sum((["-k", name] for name in names), []), "-s", "600000"])
+                    time.sleep(.5)
+
+                def banner_sizes():
+                    return re.findall(r"zwlr_layer_surface_v1[@#]\d+\.set_size\(420, (\d+)\)",
+                                      (artifacts / "native.log").read_text())
+
+                def popup_parent_keyboard():
+                    trace = (artifacts / "native.log").read_text()
+                    parent = re.findall(r"zwlr_layer_surface_v1[@#](\d+)\.get_popup\(", trace)[-1]
+                    return int(re.findall(rf"zwlr_layer_surface_v1[@#]{parent}\.set_keyboard_interactivity\((\d+)\)", trace)[-1])
 
                 def scroll(delta):
                     subprocess.run(["swaymsg", "-s", ipc, "seat seat0 cursor set 1000 450"], env=env,
@@ -172,7 +229,16 @@ def main():
                 time.sleep(1)
                 pump()
                 assert not any(member == "NotificationClosed" and args[0] == first for member, args in received)
-                click(892, 174)
+                hover(1000, 112)
+                capture("single-action-hover-light")
+                with Image.open(artifacts / "popup-light.png") as before, Image.open(artifacts / "single-action-hover-light.png") as after:
+                    assert ImageChops.difference(before, after).crop((1100, 152, 1250, 192)).getbbox(), "single action did not reveal"
+                    assert not ImageChops.difference(before, after).crop((850, 60, 1250, 150)).getbbox(), "revealing actions moved the message"
+                hover(0, 0)
+                capture("single-action-hidden-again")
+                with Image.open(artifacts / "popup-light.png") as before, Image.open(artifacts / "single-action-hidden-again.png") as after:
+                    assert not ImageChops.difference(before, after).crop((844, 56, 1264, 216)).getbbox(), "pointer-only popup retained its action"
+                click(1205, 174)
                 signal("ActionInvoked", first, "'open'")
                 token_index = next(i for i, (member, args) in enumerate(received) if member == "ActivationToken" and args[0] == first)
                 action_index = received.index(("ActionInvoked", (first, "open")))
@@ -270,7 +336,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     for action in ("dismiss", "reply"):
                         nested = notify("Separate controls", actions="['default', 'Open', 'reply', 'Reply']")
                         capture(f"nested-{action}-{scheme}")
-                        click(1238, 80) if action == "dismiss" else click(890, 174)
+                        click(1238, 80) if action == "dismiss" else click(1205, 174)
                         signal("NotificationClosed", nested, "uint32 2")
                         invoked = [args[1] for member, args in received if member == "ActionInvoked" and args[0] == nested]
                         assert invoked == ([] if action == "dismiss" else ["reply"]), "nested control also invoked the card"
@@ -278,13 +344,111 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     capture(f"no-icon-{scheme}")
                     click(1238, 80)
                     signal("NotificationClosed", plain, "uint32 2")
+                    if scheme == "light":
+                        subprocess.run(["swaymsg", "-s", ipc,
+                            '[app_id="dev.ouro.activation-test"] move container to workspace number 3; workspace number 2'],
+                            env=env, check=True, stdout=log)
+                        assert not focused_target()
+                    keyboard_enters = re.findall(r"wl_keyboard[@#]\d+\.enter\(", (artifacts / "native.log").read_text())
+                    menu_id = notify("Alex · #design", app_name="Team chat", app_icon="fixture-chat",
+                        actions="['default', 'Open', 'reply', 'Reply', 'settings', 'Settings']")
+                    capture(f"options-rest-{scheme}")
+                    assert re.findall(r"wl_keyboard[@#]\d+\.enter\(", (artifacts / "native.log").read_text()) == keyboard_enters, "notification arrival stole focus"
+                    hover(1000, 112)
+                    capture(f"options-hover-{scheme}")
+                    sizes = banner_sizes()
+                    click(1205, 174, leave=False)
+                    capture(f"options-open-{scheme}")
+                    geometry = popup_geometry()
+                    assert geometry and geometry[2:] == (240, 74), geometry
+                    assert popup_parent_keyboard() == 1, "explicitly opening Options must request banner keyboard focus"
+                    assert sizes[-1] == "200" and all(size == "200" for size in banner_sizes()[len(sizes):]), "opening Options changed the parent allocation"
+                    with Image.open(artifacts / f"options-hover-{scheme}.png") as before, Image.open(artifacts / f"options-open-{scheme}.png") as after:
+                        assert not ImageChops.difference(before, after).crop((844, 56, 1264, 150)).getbbox(), "opening Options reflowed the message"
+                        with Image.open(artifacts / f"options-rest-{scheme}.png") as rest:
+                            edge = (844, 56, 854, 256)
+                            assert rest.crop(edge).tobytes() == before.crop(edge).tobytes() == after.crop(edge).tobytes(), \
+                                "revealing or opening Options changed the card's outer bounds"
+                        assert ImageChops.difference(before, after).crop((geometry[0], 256, geometry[0] + geometry[2], geometry[1] + geometry[3])).getbbox(), \
+                            "native menu did not render beyond the parent's 200px allocation"
+                    pump()
+                    assert not any(member == "ActionInvoked" and args[0] == menu_id for member, args in received), "Options invoked the default action"
+                    hover(0, 0)
+                    capture(f"options-left-{scheme}")
+                    assert popup_geometry() == geometry, "moving outside must not close a native menu"
+                    click(0, 400)
+                    assert popup_geometry() is None, "outside click did not dismiss native menu"
+                    assert popup_parent_keyboard() == 0, "outside dismissal must restore the banner's keyboard policy"
+                    click(1205, 174, leave=False)
+                    if scheme == "light": select_menu(1)
+                    else:
+                        keys("Escape")
+                        assert popup_geometry() is None, "banner's native menu did not receive Escape"
+                        assert popup_parent_keyboard() == 0, "Escape must restore the banner's keyboard policy"
+                        click(1205, 174, leave=False)
+                        keys("Tab", "Return")
+                    signal("ActionInvoked", menu_id, "'settings'")
+                    signal("NotificationClosed", menu_id, "uint32 2")
+                    invoked = [args[1] for member, args in received if member == "ActionInvoked" and args[0] == menu_id]
+                    assert invoked == ["settings"], "menu item also invoked the default action"
+                    tokens = [args[1] for member, args in received if member == "ActivationToken" and args[0] == menu_id]
+                    assert len(tokens) == 1 and tokens[0], "native menu action lost its activation token"
+                    if scheme == "light":
+                        call(target, "runtime.activate", arguments={"activationToken": tokens[0]})
+                        wait_for(focused_target, "native menu token did not activate the target on workspace 3")
+                maximum_menu = notify("Four available actions for a notification with a deliberately long title",
+                    body="Choose an action from this notification, whose longer message also fills both available lines.",
+                    actions="['a', 'Open file', 'b', 'Show folder', 'c', 'Copy path', 'd', 'Archive']")
+                hover(1000, 112)
+                click(1205, 218, leave=False)
+                capture("options-four-actions-wrapped")
+                assert popup_geometry()[2:] == (240, 138)
+                select_menu(3)
+                signal("ActionInvoked", maximum_menu, "'d'")
+                signal("NotificationClosed", maximum_menu, "uint32 2")
+
+                # The same wrapped card on a short output forces flip_y.
+                subprocess.run(["swaymsg", "-s", ipc, "output HEADLESS-1 mode 1280x300"], env=env, check=True, stdout=log)
+                edge_menu = notify("Four available actions for a notification with a deliberately long title",
+                    body="Choose an action from this notification, whose longer message also fills both available lines.",
+                    actions="['a', 'Open file', 'b', 'Show folder', 'c', 'Copy path', 'd', 'Archive']")
+                click(1205, 218, leave=False)
+                capture("options-screen-edge")
+                x, y, width, height = popup_geometry()
+                assert y < 218 and 0 <= x <= 1280 - width and 0 <= y <= 300 - height, "menu did not flip/slide inside output"
+                select_menu(2)
+                signal("ActionInvoked", edge_menu, "'c'")
+                signal("NotificationClosed", edge_menu, "uint32 2")
+                subprocess.run(["swaymsg", "-s", ipc, "output HEADLESS-1 mode 1280x800"], env=env, check=True, stdout=log)
+
+                for removal in ("replacement", "no-actions", "close", "expiry", "parent"):
+                    disappearing = notify("Menu lifetime", actions="['a', 'First', 'b', 'Second']", timeout=2200 if removal == "expiry" else 0)
+                    click(1205, 174, leave=False)
+                    assert popup_geometry(), removal
+                    if removal == "replacement":
+                        notify("Replacement with the same action keys", replaces=disappearing, actions="['a', 'First', 'b', 'Second']")
+                    elif removal == "no-actions":
+                        notify("Replacement without actions", replaces=disappearing)
+                    elif removal == "close":
+                        method("CloseNotification", disappearing)
+                    elif removal == "parent":
+                        call(endpoint, "notifications.toggle")
+                    else:
+                        signal("NotificationClosed", disappearing, "uint32 1")
+                    wait_for(lambda: popup_geometry() is None, f"{removal} left a stale native menu")
+                    pump()
+                    assert not any(member == "ActionInvoked" and args[0] == disappearing for member, args in received)
+                    if removal == "parent": call(endpoint, "notifications.toggle")
+                    if removal in ("replacement", "no-actions", "parent"): method("CloseNotification", disappearing)
+
                 history_action = notify("Clickable history surface", actions="['default', 'Open', 'reply', 'Reply']")
                 call(endpoint, "notifications.toggle")
                 capture("history-surface")
                 subprocess.run(["swaymsg", "-s", ipc, "seat seat0 cursor set 1000 284"], env=env, check=True, stdout=log)
                 capture("history-surface-hover")
                 with Image.open(artifacts / "history-surface.png") as before, Image.open(artifacts / "history-surface-hover.png") as after:
-                    assert not ImageChops.difference(before, after).crop((860, 256, 1248, 384)).getbbox(), "history hover painted an inner box"
+                    assert not ImageChops.difference(before, after).crop((864, 260, 1244, 330)).getbbox(), "history hover changed the message surface"
+                    assert ImageChops.difference(before, after).crop((1130, 334, 1235, 375)).getbbox(), "history action did not reveal"
                 click(865, 284)  # Outer card padding, not the title/body.
                 signal("ActionInvoked", history_action, "'default'")
                 signal("NotificationClosed", history_action, "uint32 2")
@@ -292,11 +456,49 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     nested = notify("Separate history controls", actions="['default', 'Open', 'reply', 'Reply']")
                     call(endpoint, "notifications.toggle")
                     capture(f"history-nested-{action}")
-                    click(1214, 284) if action == "dismiss" else click(900, 350)
+                    click(1214, 284) if action == "dismiss" else click(1190, 350)
                     signal("NotificationClosed", nested, "uint32 2")
                     invoked = [args[1] for member, args in received if member == "ActionInvoked" and args[0] == nested]
                     assert invoked == ([] if action == "dismiss" else ["reply"]), "history control also invoked the card"
                     if action == "dismiss": call(endpoint, "notifications.toggle")
+                keyboard_menu = notify("Keyboard options", actions="['reply', 'Reply', 'settings', 'Settings']")
+                call(endpoint, "notifications.toggle")
+                time.sleep(.5)
+                # Sway 1.7 auto-focuses this on-demand layer, so it cannot
+                # exercise an initially unfocused history. Still verify
+                # pointer-open dismissal restores focus without hover.
+                click(1190, 350, leave=False)
+                assert popup_geometry(), "pointer did not open history menu"
+                hover(0, 0)
+                keys("Escape")
+                assert popup_geometry() is None
+                keys("Return")
+                assert popup_geometry(), "pointer-open history lost Options focus after Escape"
+                keys("Escape")
+                call(endpoint, "notifications.toggle")
+                time.sleep(.3)
+                call(endpoint, "notifications.toggle")
+                capture("history-options-rest")
+                click(1050, 88)
+                keys("Tab", "Tab", "Tab", "Tab", "Tab")
+                capture("history-options-keyboard-reveal")
+                keys("Tab", "Return")
+                capture("history-options-keyboard-open")
+                assert popup_geometry(), "keyboard Options did not open native menu"
+                keys("Escape")
+                capture("history-options-keyboard-escape")
+                assert popup_geometry() is None, "Escape did not dismiss native menu"
+                with Image.open(artifacts / "history-options-rest.png") as rest, \
+                     Image.open(artifacts / "history-options-keyboard-reveal.png") as reveal, \
+                     Image.open(artifacts / "history-options-keyboard-open.png") as opened, \
+                     Image.open(artifacts / "history-options-keyboard-escape.png") as escaped:
+                    assert ImageChops.difference(rest, reveal).crop((1120, 334, 1235, 375)).getbbox(), "focus on dismiss did not reveal Options"
+                    assert ImageChops.difference(opened, escaped).crop((1120, 375, 1235, 445)).getbbox(), "Escape did not close the menu"
+                keys("Return")
+                assert popup_geometry(), "Escape did not restore focus to Options"
+                keys("Tab", "Return")
+                signal("ActionInvoked", keyboard_menu, "'settings'")
+                signal("NotificationClosed", keyboard_menu, "uint32 2")
                 keyboard_action = notify("Keyboard activation", actions="['default', 'Open']")
                 call(endpoint, "notifications.toggle")
                 capture("history-before-focus")
@@ -415,7 +617,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     method("CloseNotification", notice)
 
                 oldest = notify("Oldest retained message", app_name="History fixture", body="End of history.",
-                                actions="['inspect', 'Inspect oldest']")
+                                actions="['other', 'Another action', 'inspect', 'Inspect oldest']")
                 retained = []
                 for index in range(99):
                     retained.append(notify(f"History message {index + 1}", app_name="History fixture",
@@ -430,11 +632,18 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                 with Image.open(artifacts / "history-100-bottom.png") as before, Image.open(artifacts / "history-anchor-retained.png") as after:
                     assert not ImageChops.difference(before, after).crop((860, 216, 1247, 671)).getbbox(), \
                         "updating an offscreen message moved the visible scroll anchor"
-                click(925, 634)
+                click(1180, 634, leave=False)
+                capture("history-menu-outside-virtual-row")
+                x, y, width, height = popup_geometry()
+                assert y + height > 671, "fixture must extend the menu beyond the virtual viewport"
+                with Image.open(artifacts / "history-anchor-retained.png") as before, Image.open(artifacts / "history-menu-outside-virtual-row.png") as after:
+                    assert ImageChops.difference(before, after).crop((x, 672, x + width, y + height)).getbbox(), \
+                        "virtual-list clipping hid the native menu"
+                select_menu(1)
                 signal("ActionInvoked", oldest, "'inspect'")
                 signal("NotificationClosed", oldest, "uint32 2")
                 bus.close_sync(None)
-                print(f"PASS: real notification RPC/signals, replacement, actions, expiry after popup removal, bell, DND, scrolling/themes; {artifacts}")
+                print(f"PASS: notification RPC/signals/tokens, native popup geometry, edge flip, keyboard/outside dismissal, parent lifetime, DND, themes and 100-item history; {artifacts}")
             finally:
                 if pointer:
                     pointer.close()

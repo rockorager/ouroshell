@@ -72,9 +72,9 @@ local function notification_image(image)
   return ouro.xdg.icon(props)
 end
 
-local function notification_surface(item, key, surface, radius, content, activate)
+local function notification_surface(item, key, surface, radius, content, activate, interaction)
   local theme, palette = appearance.colors()
-  local props = { key = key, radius = radius,
+  local props = { key = key, radius = radius, on_interaction_change = interaction,
     border_width = f.border_width_default, border = item.urgent and palette.amber.step_7 or theme.border,
     children = { ouro.box { key = "inset", width = "fill", padding = f.spacing_3, children = { content } } },
   }
@@ -89,7 +89,7 @@ local function notification_surface(item, key, surface, radius, content, activat
   return ouro.box(props)
 end
 
-function M.card(item, dismiss, activate)
+local function card(item, dismiss, activate, actions, interaction)
   local theme = appearance.colors()
   local heading = {}
   if item.image then heading[#heading + 1] = notification_image(item.image) end
@@ -102,19 +102,9 @@ function M.card(item, dismiss, activate)
     children[#children + 1] = ouro.text { key = "body", text = item.body, size = f.typography_2,
       foreground = theme.muted_foreground, max_lines = 5 }
   end
-  if item.action then
-    children[#children + 1] = ouro.row { key = "actions", children = {
-      ouro.button { key = "action", label = item.action, on_press = activate },
-    } }
-  end
-  for index, action in ipairs(item.actions or {}) do
-    if action.key ~= "default" then children[#children + 1] = ouro.row { key = "action-row-" .. index, children = {
-      ouro.button { key = "action-" .. index, label = action.label,
-        on_press = function() activate(action.key) end },
-    } } end
-  end
+  if actions then children[#children + 1] = actions end
   return notification_surface(item, "notification-" .. item.id, "card", f.radius_4,
-    ouro.column { key = "content", gap = f.spacing_2, cross_alignment = "stretch", children = children }, activate)
+    ouro.column { key = "content", gap = f.spacing_2, cross_alignment = "stretch", children = children }, activate, interaction)
 end
 
 function M.content(state, callbacks)
@@ -210,7 +200,7 @@ function M.content(state, callbacks)
     } }
 end
 
-function M.popup(item, callbacks)
+local function popup(item, callbacks, actions, interaction)
   local theme = appearance.colors()
   local heading = {}
   if item.image then heading[#heading + 1] = notification_image(item.image) end
@@ -229,16 +219,110 @@ function M.popup(item, callbacks)
     ouro.row { key = "app", gap = f.spacing_2, cross_alignment = "center", children = heading },
     content,
   }
-  local actions = item.actions or (item.action and { { key = "action", label = item.action } } or {})
-  for index, action in ipairs(actions) do
-    if action.key ~= "default" then children[#children + 1] = ouro.row { key = "action-row-" .. index, children = {
-      ouro.button { key = item.action and "action" or "action-" .. index, label = action.label,
-        background = ouro.tokens.palette.transparent, foreground = theme.foreground, hover = theme.accent_hover,
-        on_press = function() callbacks.activate(action.key) end },
-    } } end
-  end
+  if actions then children[#children + 1] = actions end
   return notification_surface(item, "popup", "sidebar", f.radius_5,
-    ouro.column { key = "layout", gap = f.spacing_2, cross_alignment = "stretch", children = children }, callbacks.activate)
+    ouro.column { key = "layout", gap = f.spacing_2, cross_alignment = "stretch", children = children }, callbacks.activate, interaction)
+end
+
+local notification = ouro.component(function(props)
+  local active, menu, invoking = ouro.signal(false), ouro.signal(nil), ouro.signal(nil)
+  local function close_menu(open)
+    if menu() == open then menu:set(nil) end
+    if open and open.handle then open.handle:close() end
+  end
+  return function()
+    local item, theme, activate = props.item, appearance.colors(), props.activate
+    local open = menu()
+    if open and open.item ~= item then
+      -- Close queues on_close at a task safe point. Do not write a signal
+      -- while reconciling a same-ID replacement's new props.
+      if open.handle then open.handle:close() end
+      open = nil
+    end
+    local actions = {}
+    for index, action in ipairs(item.actions or (item.action and { { key = "action", label = item.action } } or {})) do
+      if action.key ~= "default" then
+        actions[#actions + 1] = { key = item.action and "action" or "action-" .. index, action = action }
+      end
+    end
+    local controls
+    if #actions > 0 then
+      local children = { ouro.box { key = "spacer", flex = 1 } }
+      if active() or open or invoking() == item then
+        local function action_button(entry)
+          local theme = appearance.colors()
+          return ouro.button { key = entry.key, label = entry.action.label, height = f.spacing_6,
+            background = ouro.tokens.palette.transparent, foreground = theme.foreground, hover = theme.accent_hover,
+            border_width = f.border_width_default, border = ouro.tokens.palette.transparent, focus = theme.ring,
+            on_press = function()
+              if props.item ~= item or invoking() == item then return end
+              -- Activation-token acquisition yields. Keep this callback's
+              -- originating control mounted even if the native popup closes.
+              local open = menu()
+              invoking:set(item)
+              activate(entry.action.key)
+              invoking:set(nil)
+              close_menu(open)
+            end }
+        end
+        if #actions == 1 then
+          children[#children + 1] = action_button(actions[1])
+        else
+          local trigger = ouro.box { key = "trigger", height = f.spacing_6, padding = f.spacing_1, children = {
+            ouro.row { key = "label", gap = f.spacing_1, cross_alignment = "center", children = {
+              ouro.text { key = "text", text = "Options", size = f.typography_2 },
+              icon("disclosure", open and "pan-up-symbolic" or "pan-down-symbolic", theme.muted_foreground),
+            } },
+          } }
+          children[#children + 1] = ouro.button { key = "options", label = open and "Close notification options" or "Notification options",
+            height = f.spacing_6 + 2 * f.border_width_default, padding_x = 0, background = ouro.tokens.palette.transparent,
+            hover = ouro.tokens.palette.transparent, pressed = ouro.tokens.palette.transparent,
+            border_width = f.border_width_default, border = ouro.tokens.palette.transparent, focus = theme.ring,
+            on_press = function()
+              if invoking() == item then return end
+              if menu() and menu().item == item then close_menu(menu()); return end
+              local opened = { item = item }
+              menu:set(opened)
+              -- Open before yielding: Ourokit captures this button's bounds
+              -- and input serial, not the notification's enclosing surface.
+              opened.handle = ouro.popup {
+                width = 240, height = math.ceil(#actions * f.spacing_6 + 2 * (f.spacing_1 + f.border_width_default)),
+                content = function()
+                  local buttons = {}
+                  for _, entry in ipairs(actions) do buttons[#buttons + 1] = action_button(entry) end
+                  return ouro.box { key = "menu", surface = "popover", radius = f.radius_2,
+                    width = "fill", height = "fill", padding = f.spacing_1,
+                    border_width = f.border_width_default, children = {
+                      ouro.column { key = "items", gap = 0, cross_alignment = "stretch", children = buttons },
+                    } }
+                end,
+                on_close = function() if menu() == opened then menu:set(nil) end end,
+              }
+              if not opened.handle then close_menu(opened) end
+            end,
+            children = { trigger },
+          }
+        end
+      end
+      -- Reserve the trigger's height so revealing it never shifts the message.
+      controls = ouro.box { key = "actions", min_height = f.spacing_6 + 2 * f.border_width_default, width = "fill",
+        children = { ouro.row { key = "controls", cross_alignment = "start", children = children } } }
+    end
+    local interaction = #actions > 0 and function(value) active:set(value) end or nil
+    if props.popup then
+      return popup(item, props, controls, interaction)
+    end
+    return card(item, props.dismiss, props.activate, controls, interaction)
+  end
+end)
+
+function M.card(item, dismiss, activate)
+  return notification { key = "notification-" .. item.id, item = item, dismiss = dismiss, activate = activate }
+end
+
+function M.popup(item, callbacks)
+  return notification { key = "popup-" .. item.id, item = item, popup = true,
+    dismiss = callbacks.dismiss, activate = callbacks.activate }
 end
 
 return M

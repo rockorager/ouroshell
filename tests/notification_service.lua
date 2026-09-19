@@ -1,6 +1,8 @@
 package.path = "src/?.lua;" .. package.path
 local tasks, signals, methods = {}, {}, nil
-local ouro = { tokens = { foundation = {} } }
+local ouro = { tokens = { foundation = {}, palette = { transparent = "transparent" } } }
+ouro.component = function(initialize) return function(props) return initialize(props)() end end
+ouro.layer_surface = function(props) return props end
 ouro.signal = function(value)
   return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
 end
@@ -156,4 +158,14 @@ assert(notify_icon("Unknown", "", "missing") == nil, "missing metadata must not 
 assert(notify_icon("Hidden", "", "hidden") == nil)
 assert(notify_icon("Empty", "", "empty") == nil)
 assert(notify_icon("Unknown", "/tmp/untrusted.png", nil) == nil, "unloadable files must not produce an image")
+local sizing = service.new()
+for count = 0, 4 do
+  local actions = count < 4 and { { key = "default", label = "Open" } } or {}
+  for index = 1, count do actions[#actions + 1] = { key = tostring(index), label = "Action " .. index } end
+  sizing.popup:set { id = 1, default_action = count < 4, actions = actions }
+  local window = service.window(sizing)
+  assert(window.width == 420 and window.height == (count == 0 and 160 or 200),
+    "banner allocation must reserve one compact slot, not space for each menu entry")
+  assert(window.keyboard_interactivity == "none", "notification arrival must not request keyboard focus")
+end
 print("PASS: notification IDs, replacement timers, closure reasons, actions, hints, DND, UTF-8, history and limits")
