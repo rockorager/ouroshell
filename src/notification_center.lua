@@ -94,6 +94,7 @@ local function card(item, dismiss, activate, actions, interaction)
   local heading = {}
   if item.image then heading[#heading + 1] = notification_image(item.image) end
   heading[#heading + 1] = ouro.text { key = "title", text = item.title, size = f.typography_3, max_lines = 2, flex = 1 }
+  if actions then heading[#heading + 1] = actions end
   heading[#heading + 1] = icon_button("dismiss", "Dismiss " .. item.title, "window-close-symbolic", dismiss)
   local children = {
     ouro.row { key = "heading", gap = f.spacing_2, cross_alignment = "center", children = heading },
@@ -102,7 +103,6 @@ local function card(item, dismiss, activate, actions, interaction)
     children[#children + 1] = ouro.text { key = "body", text = item.body, size = f.typography_2,
       foreground = theme.muted_foreground, max_lines = 5 }
   end
-  if actions then children[#children + 1] = actions end
   return notification_surface(item, "notification-" .. item.id, "card", f.radius_4,
     ouro.column { key = "content", gap = f.spacing_2, cross_alignment = "stretch", children = children }, activate, interaction)
 end
@@ -206,6 +206,7 @@ local function popup(item, callbacks, actions, interaction)
   if item.image then heading[#heading + 1] = notification_image(item.image) end
   heading[#heading + 1] = ouro.text { key = "name", text = item.app, size = f.typography_2,
     foreground = theme.muted_foreground, flex = 1, max_lines = 1 }
+  if actions then heading[#heading + 1] = actions end
   heading[#heading + 1] = ouro.button { key = "dismiss", label = "Dismiss " .. item.title,
     width = f.spacing_5, height = f.spacing_5, padding_x = 0,
     background = ouro.tokens.palette.transparent, hover = theme.accent_hover, on_press = callbacks.dismiss,
@@ -219,7 +220,6 @@ local function popup(item, callbacks, actions, interaction)
     ouro.row { key = "app", gap = f.spacing_2, cross_alignment = "center", children = heading },
     content,
   }
-  if actions then children[#children + 1] = actions end
   return notification_surface(item, "popup", "sidebar", f.radius_5,
     ouro.column { key = "layout", gap = f.spacing_2, cross_alignment = "stretch", children = children }, callbacks.activate, interaction)
 end
@@ -247,11 +247,13 @@ local notification = ouro.component(function(props)
     end
     local controls
     if #actions > 0 then
-      local children = { ouro.box { key = "spacer", flex = 1 } }
+      local children = {}
       if active() or open or invoking() == item then
         local function action_button(entry)
           local theme = appearance.colors()
-          return ouro.button { key = entry.key, label = entry.action.label, height = f.spacing_6,
+          return ouro.button { key = entry.key, label = entry.action.label,
+            width = #actions == 1 and 112 or nil, height = #actions == 1 and f.spacing_5 or f.spacing_6,
+            children = { ouro.text { key = "label", text = entry.action.label, size = f.typography_2, max_lines = 1 } },
             background = ouro.tokens.palette.transparent, foreground = theme.foreground, hover = theme.accent_hover,
             border_width = f.border_width_default, border = ouro.tokens.palette.transparent, focus = theme.ring,
             on_press = function()
@@ -268,14 +270,14 @@ local notification = ouro.component(function(props)
         if #actions == 1 then
           children[#children + 1] = action_button(actions[1])
         else
-          local trigger = ouro.box { key = "trigger", height = f.spacing_6, padding = f.spacing_1, children = {
+          local trigger = ouro.box { key = "trigger", children = {
             ouro.row { key = "label", gap = f.spacing_1, cross_alignment = "center", children = {
               ouro.text { key = "text", text = "Options", size = f.typography_2 },
               icon("disclosure", open and "pan-up-symbolic" or "pan-down-symbolic", theme.muted_foreground),
             } },
           } }
           children[#children + 1] = ouro.button { key = "options", label = open and "Close notification options" or "Notification options",
-            height = f.spacing_6 + 2 * f.border_width_default, padding_x = 0, background = ouro.tokens.palette.transparent,
+            width = 112, height = f.spacing_5, padding_x = f.spacing_1, background = ouro.tokens.palette.transparent,
             hover = ouro.tokens.palette.transparent, pressed = ouro.tokens.palette.transparent,
             border_width = f.border_width_default, border = ouro.tokens.palette.transparent, focus = theme.ring,
             on_press = function()
@@ -304,9 +306,9 @@ local notification = ouro.component(function(props)
           }
         end
       end
-      -- Reserve the trigger's height so revealing it never shifts the message.
-      controls = ouro.box { key = "actions", min_height = f.spacing_6 + 2 * f.border_width_default, width = "fill",
-        children = { ouro.row { key = "controls", cross_alignment = "start", children = children } } }
+      -- Reserve horizontal header space, not a footer. Hover and keyboard
+      -- reveal must not rewrap the heading or change the card's height.
+      controls = ouro.box { key = "actions", width = 112, height = f.spacing_5, children = children }
     end
     local interaction = #actions > 0 and function(value) active:set(value) end or nil
     if props.popup then

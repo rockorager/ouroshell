@@ -232,13 +232,15 @@ def main():
                 hover(1000, 112)
                 capture("single-action-hover-light")
                 with Image.open(artifacts / "popup-light.png") as before, Image.open(artifacts / "single-action-hover-light.png") as after:
-                    assert ImageChops.difference(before, after).crop((1100, 152, 1250, 192)).getbbox(), "single action did not reveal"
-                    assert not ImageChops.difference(before, after).crop((850, 60, 1250, 150)).getbbox(), "revealing actions moved the message"
+                    assert ImageChops.difference(before, after).crop((1100, 68, 1220, 94)).getbbox(), "header action did not reveal"
+                    assert not ImageChops.difference(before, after).crop((850, 96, 1250, 150)).getbbox(), "revealing actions moved the message"
+                    background = before.convert("RGB").getpixel((500, 175))
+                    assert before.convert("RGB").getpixel((850, 175)) == background, "hidden action left an empty footer"
                 hover(0, 0)
                 capture("single-action-hidden-again")
                 with Image.open(artifacts / "popup-light.png") as before, Image.open(artifacts / "single-action-hidden-again.png") as after:
                     assert not ImageChops.difference(before, after).crop((844, 56, 1264, 216)).getbbox(), "pointer-only popup retained its action"
-                click(1205, 174)
+                click(1180, 80)
                 signal("ActionInvoked", first, "'open'")
                 token_index = next(i for i, (member, args) in enumerate(received) if member == "ActivationToken" and args[0] == first)
                 action_index = received.index(("ActionInvoked", (first, "open")))
@@ -336,7 +338,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     for action in ("dismiss", "reply"):
                         nested = notify("Separate controls", actions="['default', 'Open', 'reply', 'Reply']")
                         capture(f"nested-{action}-{scheme}")
-                        click(1238, 80) if action == "dismiss" else click(1205, 174)
+                        click(1238, 80) if action == "dismiss" else click(1180, 80)
                         signal("NotificationClosed", nested, "uint32 2")
                         invoked = [args[1] for member, args in received if member == "ActionInvoked" and args[0] == nested]
                         assert invoked == ([] if action == "dismiss" else ["reply"]), "nested control also invoked the card"
@@ -357,20 +359,20 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     hover(1000, 112)
                     capture(f"options-hover-{scheme}")
                     sizes = banner_sizes()
-                    click(1205, 174, leave=False)
+                    click(1180, 80, leave=False)
                     capture(f"options-open-{scheme}")
                     geometry = popup_geometry()
                     assert geometry and geometry[2:] == (240, 74), geometry
                     assert popup_parent_keyboard() == 1, "explicitly opening Options must request banner keyboard focus"
-                    assert sizes[-1] == "200" and all(size == "200" for size in banner_sizes()[len(sizes):]), "opening Options changed the parent allocation"
+                    assert sizes[-1] == "160" and all(size == "160" for size in banner_sizes()[len(sizes):]), "opening Options changed the parent allocation"
                     with Image.open(artifacts / f"options-hover-{scheme}.png") as before, Image.open(artifacts / f"options-open-{scheme}.png") as after:
-                        assert not ImageChops.difference(before, after).crop((844, 56, 1264, 150)).getbbox(), "opening Options reflowed the message"
+                        assert not ImageChops.difference(before, after).crop((844, 56, geometry[0], 150)).getbbox(), "opening Options reflowed the message"
                         with Image.open(artifacts / f"options-rest-{scheme}.png") as rest:
-                            edge = (844, 56, 854, 256)
+                            edge = (844, 56, 854, 216)
                             assert rest.crop(edge).tobytes() == before.crop(edge).tobytes() == after.crop(edge).tobytes(), \
                                 "revealing or opening Options changed the card's outer bounds"
-                        assert ImageChops.difference(before, after).crop((geometry[0], 256, geometry[0] + geometry[2], geometry[1] + geometry[3])).getbbox(), \
-                            "native menu did not render beyond the parent's 200px allocation"
+                            assert not ImageChops.difference(rest, before).crop((856, 96, 1250, 150)).getbbox(), \
+                                "revealing header Options moved the message"
                     pump()
                     assert not any(member == "ActionInvoked" and args[0] == menu_id for member, args in received), "Options invoked the default action"
                     hover(0, 0)
@@ -379,13 +381,13 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     click(0, 400)
                     assert popup_geometry() is None, "outside click did not dismiss native menu"
                     assert popup_parent_keyboard() == 0, "outside dismissal must restore the banner's keyboard policy"
-                    click(1205, 174, leave=False)
+                    click(1180, 80, leave=False)
                     if scheme == "light": select_menu(1)
                     else:
                         keys("Escape")
                         assert popup_geometry() is None, "banner's native menu did not receive Escape"
                         assert popup_parent_keyboard() == 0, "Escape must restore the banner's keyboard policy"
-                        click(1205, 174, leave=False)
+                        click(1180, 80, leave=False)
                         keys("Tab", "Return")
                     signal("ActionInvoked", menu_id, "'settings'")
                     signal("NotificationClosed", menu_id, "uint32 2")
@@ -400,22 +402,27 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     body="Choose an action from this notification, whose longer message also fills both available lines.",
                     actions="['a', 'Open file', 'b', 'Show folder', 'c', 'Copy path', 'd', 'Archive']")
                 hover(1000, 112)
-                click(1205, 218, leave=False)
+                capture("options-four-actions-rest")
+                click(1180, 80, leave=False)
                 capture("options-four-actions-wrapped")
                 assert popup_geometry()[2:] == (240, 138)
+                x, y, width, height = popup_geometry()
+                assert y + height > 216, "four-action menu must extend beyond the 160px parent allocation"
+                with Image.open(artifacts / "options-four-actions-rest.png") as before, Image.open(artifacts / "options-four-actions-wrapped.png") as after:
+                    assert ImageChops.difference(before, after).crop((x, 216, x + width, y + height)).getbbox(), "native menu was clipped to the banner"
                 select_menu(3)
                 signal("ActionInvoked", maximum_menu, "'d'")
                 signal("NotificationClosed", maximum_menu, "uint32 2")
 
-                # The same wrapped card on a short output forces flip_y.
-                subprocess.run(["swaymsg", "-s", ipc, "output HEADLESS-1 mode 1280x300"], env=env, check=True, stdout=log)
+                # A short output forces the header menu to flip or slide.
+                subprocess.run(["swaymsg", "-s", ipc, "output HEADLESS-1 mode 1280x220"], env=env, check=True, stdout=log)
                 edge_menu = notify("Four available actions for a notification with a deliberately long title",
                     body="Choose an action from this notification, whose longer message also fills both available lines.",
                     actions="['a', 'Open file', 'b', 'Show folder', 'c', 'Copy path', 'd', 'Archive']")
-                click(1205, 218, leave=False)
+                click(1180, 80, leave=False)
                 capture("options-screen-edge")
                 x, y, width, height = popup_geometry()
-                assert y < 218 and 0 <= x <= 1280 - width and 0 <= y <= 300 - height, "menu did not flip/slide inside output"
+                assert y < 94 and 0 <= x <= 1280 - width and 0 <= y <= 220 - height, "menu did not flip/slide inside output"
                 select_menu(2)
                 signal("ActionInvoked", edge_menu, "'c'")
                 signal("NotificationClosed", edge_menu, "uint32 2")
@@ -423,7 +430,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
 
                 for removal in ("replacement", "no-actions", "close", "expiry", "parent"):
                     disappearing = notify("Menu lifetime", actions="['a', 'First', 'b', 'Second']", timeout=2200 if removal == "expiry" else 0)
-                    click(1205, 174, leave=False)
+                    click(1180, 80, leave=False)
                     assert popup_geometry(), removal
                     if removal == "replacement":
                         notify("Replacement with the same action keys", replaces=disappearing, actions="['a', 'First', 'b', 'Second']")
@@ -447,8 +454,8 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                 subprocess.run(["swaymsg", "-s", ipc, "seat seat0 cursor set 1000 284"], env=env, check=True, stdout=log)
                 capture("history-surface-hover")
                 with Image.open(artifacts / "history-surface.png") as before, Image.open(artifacts / "history-surface-hover.png") as after:
-                    assert not ImageChops.difference(before, after).crop((864, 260, 1244, 330)).getbbox(), "history hover changed the message surface"
-                    assert ImageChops.difference(before, after).crop((1130, 334, 1235, 375)).getbbox(), "history action did not reveal"
+                    assert not ImageChops.difference(before, after).crop((864, 315, 1244, 345)).getbbox(), "history hover changed the message surface"
+                    assert ImageChops.difference(before, after).crop((1080, 260, 1190, 310)).getbbox(), "history header action did not reveal"
                 click(865, 284)  # Outer card padding, not the title/body.
                 signal("ActionInvoked", history_action, "'default'")
                 signal("NotificationClosed", history_action, "uint32 2")
@@ -456,7 +463,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     nested = notify("Separate history controls", actions="['default', 'Open', 'reply', 'Reply']")
                     call(endpoint, "notifications.toggle")
                     capture(f"history-nested-{action}")
-                    click(1214, 284) if action == "dismiss" else click(1190, 350)
+                    click(1214, 284) if action == "dismiss" else click(1150, 284)
                     signal("NotificationClosed", nested, "uint32 2")
                     invoked = [args[1] for member, args in received if member == "ActionInvoked" and args[0] == nested]
                     assert invoked == ([] if action == "dismiss" else ["reply"]), "history control also invoked the card"
@@ -467,7 +474,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                 # Sway 1.7 auto-focuses this on-demand layer, so it cannot
                 # exercise an initially unfocused history. Still verify
                 # pointer-open dismissal restores focus without hover.
-                click(1190, 350, leave=False)
+                click(1150, 284, leave=False)
                 assert popup_geometry(), "pointer did not open history menu"
                 hover(0, 0)
                 keys("Escape")
@@ -482,7 +489,9 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                 click(1050, 88)
                 keys("Tab", "Tab", "Tab", "Tab", "Tab")
                 capture("history-options-keyboard-reveal")
-                keys("Tab", "Return")
+                # Revealing from dismiss inserts Options immediately before it.
+                start(["wtype", "-M", "shift", "-k", "Tab", "-m", "shift", "-k", "Return", "-s", "600000"])
+                time.sleep(.5)
                 capture("history-options-keyboard-open")
                 assert popup_geometry(), "keyboard Options did not open native menu"
                 keys("Escape")
@@ -492,8 +501,8 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                      Image.open(artifacts / "history-options-keyboard-reveal.png") as reveal, \
                      Image.open(artifacts / "history-options-keyboard-open.png") as opened, \
                      Image.open(artifacts / "history-options-keyboard-escape.png") as escaped:
-                    assert ImageChops.difference(rest, reveal).crop((1120, 334, 1235, 375)).getbbox(), "focus on dismiss did not reveal Options"
-                    assert ImageChops.difference(opened, escaped).crop((1120, 375, 1235, 445)).getbbox(), "Escape did not close the menu"
+                    assert ImageChops.difference(rest, reveal).crop((1080, 260, 1190, 310)).getbbox(), "focus on dismiss did not reveal Options"
+                    assert ImageChops.difference(opened, escaped).crop((1000, 320, 1190, 360)).getbbox(), "Escape did not close the menu"
                 keys("Return")
                 assert popup_geometry(), "Escape did not restore focus to Options"
                 keys("Tab", "Return")
@@ -632,7 +641,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                 with Image.open(artifacts / "history-100-bottom.png") as before, Image.open(artifacts / "history-anchor-retained.png") as after:
                     assert not ImageChops.difference(before, after).crop((860, 216, 1247, 671)).getbbox(), \
                         "updating an offscreen message moved the visible scroll anchor"
-                click(1180, 634, leave=False)
+                click(1150, 602, leave=False)
                 capture("history-menu-outside-virtual-row")
                 x, y, width, height = popup_geometry()
                 assert y + height > 671, "fixture must extend the menu beyond the virtual viewport"

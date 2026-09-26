@@ -150,7 +150,8 @@ for _, quiet in ipairs({ false, true }) do
   assert(#controls == 2 and controls[1].key == "notifications" and controls[2].key == "clock",
     "bell must be immediately left of the rightmost clock")
   assert(controls[2].text == "test clock")
-  assert(controls[1].padding_x == 0, "bell must not add padding to the status row gap")
+  assert(controls[1].padding_x == ouro.tokens.foundation.spacing_2,
+    "bell hover and click area must include horizontal padding")
   assert(controls[1].foreground == ouro.tokens.dark.sidebar_foreground)
   assert(controls[1].children[1].tint == ouro.tokens.dark.sidebar_foreground,
     "bell must match the normal status icon foreground")
@@ -190,7 +191,8 @@ assert(panel.content().children[1].children[3].children[2].text == "minute 2")
 power = { percentage = 12, icon = "battery-caution-symbolic", low = true }
 local status = panel.content().children[1].children[3]
 assert(#status.children == 3 and status.children[1].key == "battery" and status.children[3].key == "clock")
-assert(status.children[1].children[2].text == "12%" and status.gap == ouro.tokens.foundation.spacing_4)
+assert(status.children[1].children[2].text == "12%" and status.gap == ouro.tokens.foundation.spacing_2,
+  "status gap must leave room for padding inside the bell button")
 connectivity = { icon = "network-wireless-signal-good-symbolic", label = "Wi-Fi" }
 status = panel.content().children[1].children[3]
 assert(#status.children == 4 and status.children[1].key == "network" and status.children[2].key == "battery")

@@ -229,11 +229,9 @@ function M.window(state)
   end
   local item = state.popup()
   if item and not state.quiet() then
-    local extra_actions = #item.actions - (item.default_action and 1 or 0)
-    -- Only the compact action slot belongs to the banner. Options opens a
-    -- separate native popup and must never increase the parent allocation.
+    -- Actions share the header; native menus never enlarge the banner.
     return ouro.layer_surface { id = "notification-popup", namespace = "ouroshell-notification-popup", layer = "overlay",
-      width = 420, height = 160 + (extra_actions > 0 and 40 or 0), anchors = { "top", "right" },
+      width = 420, height = 160, anchors = { "top", "right" },
       margins = { top = 56, right = 16 }, exclusive_zone = -1, keyboard_interactivity = "none",
       background = ouro.tokens.palette.transparent,
       content = function() return center.popup(item, {

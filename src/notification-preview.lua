@@ -58,7 +58,7 @@ return ouro.app {
         local item = popup()
         return { ouro.layer_surface {
           id = "popup", namespace = "ouroshell-notification-preview-popup", layer = "overlay",
-          width = 420, height = 190, anchors = { "top", "right" },
+          width = 420, height = 160, anchors = { "top", "right" },
           margins = { top = 56, right = 16 }, exclusive_zone = -1, keyboard_interactivity = "none",
           background = ouro.tokens.palette.transparent,
           content = function() return center.popup(item, {

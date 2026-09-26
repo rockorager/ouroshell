@@ -85,7 +85,7 @@ function M.content(state, time, output, toggle_launcher, power, connectivity, to
   if power then status[#status + 1] = battery.content(power) end
   if toggle_notifications then
     status[#status + 1] = ouro.button { key = "notifications", label = "Open notifications",
-      padding_x = 0,
+      padding_x = f.spacing_2,
       background = colors.transparent, foreground = colors.foreground, hover = colors.hover,
       on_press = toggle_notifications, children = {
         ouro.xdg.icon { key = "bell", name = quiet and "notifications-disabled-symbolic" or "preferences-system-notifications-symbolic",
@@ -120,7 +120,7 @@ function M.content(state, time, output, toggle_launcher, power, connectivity, to
               ouro.row { key = "workspaces", gap = f.spacing_1, children = items },
             },
           },
-          ouro.row { key = "status", gap = f.spacing_4, cross_alignment = "center", children = status },
+          ouro.row { key = "status", gap = f.spacing_2, cross_alignment = "center", children = status },
         },
       },
     },

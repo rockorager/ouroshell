@@ -147,16 +147,20 @@ for _, render in ipairs({
   } }
   local tree = render(item)
   assert(not find(tree, "options") and not find(tree, "action-1"))
+  local header = find(tree, "app") or find(tree, "heading")
+  assert(header.children[#header.children - 1].key == "actions" and header.children[#header.children].key == "dismiss",
+    "actions must share the header beside dismiss, not reserve a footer")
+  local slot_width, slot_height = find(tree, "actions").width, find(tree, "actions").height
   tree.on_interaction_change(true)
   assert(find(tree, "options") and not find(tree, "menu") and not find(tree, "action-3"))
   local trigger_height = find(tree, "options").height
-  local slot_height = find(tree, "actions").min_height
   find(tree, "options").on_press()
   assert(not find(tree, "menu") and not find(tree, "action-3"), "menu must not be inside the card")
   assert(find(native_menu.content(), "action-1") and not find(native_menu.content(), "action-2"), "default must not be in the menu")
   assert(find(native_menu.content(), "items").gap == 0, "menu row spacing must match its fixed native allocation")
-  assert(find(tree, "options").height == trigger_height and find(tree, "actions").min_height == slot_height,
-    "opening Options must not change the trigger or action slot size")
+  assert(find(tree, "options").height == trigger_height and find(tree, "actions").height == slot_height
+    and find(tree, "actions").width == slot_width,
+    "revealing or opening Options must not change the header slot size")
   find(tree, "options").on_press()
   assert(native_menu.closed, "the trigger must toggle closed")
   find(tree, "options").on_press()

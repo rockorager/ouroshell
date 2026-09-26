@@ -251,19 +251,22 @@ including its header and padding, without an inner hover highlight. Close and
 app-supplied buttons handle their own clicks. Keyboard focus remains visible.
 This requires an Ourokit build with content-sized (`height = "auto"`) buttons.
 
-Additional actions appear while the card is hovered or contains keyboard focus.
+Additional actions appear beside dismiss in the header while the card is hovered
+or contains keyboard focus.
 A single action appears directly; multiple actions use an Options button that
 opens a native Wayland `xdg_popup`, in the application's original order.
 Settings is treated like any other action. The menu is anchored to Options,
-outside the card's layout and window allocation, so it cannot grow the card or
+separate from the card's layout and parent surface, so it cannot grow the card or
 be clipped by a virtual history row. The compositor flips or slides it at screen
-edges. Tab reaches the trigger and menu actions; Enter/Space activates them.
+edges. Tab/Shift+Tab reaches the trigger and menu actions; Enter/Space activates
+them.
 Escape or an outside click dismisses the menu; history restores focus to
 Options, while banners restore their non-focus-stealing keyboard policy.
 Moving the pointer into the menu keeps it open. Replacement,
 expiry, or removal of the parent closes its menu.
 
-The trigger's space is reserved so revealing it does not move the message.
+The trigger's horizontal header space is reserved so revealing it does not move
+the message. Actions add no footer or extra banner height.
 Both banners and history use this behavior. Notification arrival never takes
 keyboard focus; only opening Options temporarily enables keyboard interaction
 on a banner. This requires Ourokit's `ouro.popup` API and
