@@ -46,7 +46,7 @@ cd ~/repos/ourokit
 zig build -Doptimize=ReleaseFast
 
 cd ~/repos/ouroshell
-../ourokit/zig-out/bin/ouroctl run
+../ourokit/zig-out/bin/ouroctl run --mcp
 ```
 
 Pass `--software` to use Ourokit's software renderer. The compositor must
@@ -58,16 +58,19 @@ protocol group membership, not their names or numeric labels, so identically
 named workspaces on different outputs remain separate activation targets.
 Unassigned workspaces are not shown on any output's bar.
 
-While Ouroshell is running, reload source changes transactionally with:
+For development, stop the managed shell and launch a private development copy.
+Use the exact endpoint printed by that process to reload source changes:
 
 ```sh
-../ourokit/zig-out/bin/ouroctl reload dev.ouro.shell
+../ourokit/zig-out/bin/ouroctl run --dev
+../ourokit/zig-out/bin/ouroctl dev reload "$development_socket"
 ```
 
-The application's actions table enables Ourokit's runtime control interface,
-including status, source reload, and `launcher.toggle`.
+Production `--mcp` exposes only declared actions, including `launcher.toggle`
+and `notifications.toggle`. It does not expose status, reload, or activation.
+Development endpoints are private per process, not the global launcher socket.
 
-## Install with systemd socket activation
+## Install as a systemd user service
 
 Install `ouroctl` in `~/.local/bin` and the shell in
 `~/.local/share/ouroshell`, then install the user units:
@@ -75,28 +78,34 @@ Install `ouroctl` in `~/.local/bin` and the shell in
 ```sh
 mkdir -p ~/.local/share/ouroshell ~/.config/systemd/user
 cp -r ouro.json src ~/.local/share/ouroshell/
-cp systemd/dev.ouro.shell.{socket,service} ~/.config/systemd/user/
+cp systemd/dev.ouro.shell.service ~/.config/systemd/user/
+mkdir -p ~/.local/share/dbus-1/services
+cp systemd/org.freedesktop.Notifications.service ~/.local/share/dbus-1/services/
 systemctl --user daemon-reload
-systemctl --user enable --now dev.ouro.shell.socket
-ouroctl activate dev.ouro.shell
+systemctl --user enable --now dev.ouro.shell.service
 ```
 
-Stop any manually launched shell before starting the socket unit. Systemd owns
-`$XDG_RUNTIME_DIR/ourokit/apps/dev.ouro.shell`, passes its listener to Ourokit,
-and keeps it open across service crashes and restarts. Both units stop with the
-graphical session; only the socket is enabled at login. Do not run a separate
-shell process alongside the managed service.
+Stop any manually launched shell before starting the service. When upgrading
+from socket activation, stop the old service and disable/stop
+`dev.ouro.shell.socket` before starting the new service; remove the old socket
+unit file. Ourokit no longer adopts systemd listeners.
 
-Connecting starts the process on demand. Catalog and status requests do not
-present windows: use `ouroctl activate dev.ouro.shell` (or `runtime.activate`)
-to show the bar before using the launcher. `ouroctl run` with the installed
-manifest also activates the existing endpoint. After a service restart, activate
-the UI again; window and launcher state are not restored automatically.
+The service launches the panel and notification daemon directly with `--mcp`.
+It owns `$XDG_RUNTIME_DIR/ourokit/apps/dev.ouro.shell` and stops with the graphical
+session. Do not run a separate shell process alongside the managed service.
+Window and launcher state are not restored after a restart. Graceful shutdown
+removes the endpoint. After a forced kill, remove a stale endpoint only after
+confirming no process still owns it, then restart the service.
+
+Stop and disable another notification daemon before activating Ouroshell. Only
+one service can own `org.freedesktop.Notifications`; Ouroshell retries if another
+daemon owns it. The D-Bus descriptor routes notification-triggered startup to
+the same systemd service, not a second shell process.
 
 For logs and status:
 
 ```sh
-systemctl --user status dev.ouro.shell.socket dev.ouro.shell.service
+systemctl --user status dev.ouro.shell.service
 journalctl --user -u dev.ouro.shell.service
 ```
 
@@ -144,8 +153,8 @@ entries use Monstar's explicit `monstar -e COMMAND ARG...` form. DBus-only
 entries without `Exec` are not presented, and `TryExec` is deliberately ignored.
 
 Visibility is a signal read by the reactive `windows()` declaration. The bar
-stays mounted while the launcher window comes and goes. Source reload currently
-requires the same window ID set: dismiss the launcher before reloading.
+stays mounted while the launcher window comes and goes. Development reload
+accepts structural window changes and resets the launcher's Lua state.
 
 Ourokit pins Wayring's destroyed-object dispatch fix, which is required to
 close a focused window without losing the shared Wayland connection.
@@ -166,11 +175,10 @@ Then call the bridge's `reload-tools` tool. Descriptor discovery is explicit;
 ordinary tool calls and waiting do not discover new installations. Repeat the
 export and reload after changing actions or upgrading Ourokit's runtime tools.
 
-The descriptor exposes `runtime.status`, `runtime.reload`, `runtime.activate`,
-and `launcher.toggle`. With the socket unit enabled, calls start the service
-on demand; `runtime.activate` then presents its UI. Without socket activation,
-start Ouroshell with `ouroctl run` before calling these tools. The descriptor
-alone does not launch a process.
+The descriptor exposes `launcher.toggle` and `notifications.toggle`. Start the
+service (or `ouroctl run --mcp`) before calling these tools. The descriptor
+does not launch a process, and production endpoints do not expose development
+status/reload or desktop activation.
 
 ## Check and preview
 
@@ -197,11 +205,12 @@ lua tests/notification_image.lua
 for file in src/*.lua tests/*.lua; do luac -p "$file"; done
 ```
 
-The bar and launcher follow ourosettings' `appearance.color_scheme` live,
-including custom control colors and the opaque card; the translucent backdrop
-stays dark in both themes. `default`
-uses the light palette, matching Ourokit. Settings outages retain the last
-palette and reconnect without clearing launcher state.
+The shell follows the D-Bus Settings portal's `org.freedesktop.appearance`
+`color-scheme` live, including custom control colors and the opaque card;
+the translucent backdrop stays dark in both themes. Dark (`1`) selects the
+dark palette; light (`2`), no preference (`0`), missing settings, and portal
+loss use light, matching Ourokit. Portal restarts trigger a fresh read without
+polling or clearing launcher state. No ourosettings daemon is required.
 
 Preview the launcher and active/urgent workspaces on a Wayland compositor.
 The clock and application catalog are fixtures; search, scopes, confirmations,
@@ -295,8 +304,7 @@ Run the real D-Bus, click, theme and cross-workspace activation checks on a
 private headless desktop with Sway, Grim, Python Pillow and PyGObject installed:
 
 ```sh
-OUROSETTINGS_TEST_BINARY=../ourosettings/zig-out/bin/ourosettings \
-  python3 tests/native_notification_service.py
+python3 tests/native_notification_service.py
 ```
 
 There is also a separate, interactive fixture preview. It requires Ourokit's
@@ -320,22 +328,20 @@ D-Bus export scope so removing a popup cannot cancel them.
 Run its native pointer, popup, and theme checks on a private headless desktop:
 
 ```sh
-OUROSETTINGS_TEST_BINARY=../ourosettings/zig-out/bin/ourosettings \
-  python3 tests/native_notifications.py
+python3 tests/native_notifications.py
 ```
 
 Run the native integration test with `sway`, `grim`, `wtype`, and Python's
-Pillow package installed:
+Pillow and PyGObject packages installed:
 
 ```sh
 python3 tests/native_launcher.py
 ```
 
-To also test live theme changes against an isolated ourosettings daemon, set
-`OUROSETTINGS_TEST_BINARY` to an absolute path to its executable. The test uses
-temporary settings and sockets; it never changes the desktop's appearance.
-Pass `--appearance-only` to run the light/dark/default rendering checks without
-the keyboard-driven launcher suite.
+The test provides its own Settings portal on a private D-Bus session; it never
+changes the desktop's appearance. Pass `--appearance-only` to check live
+light/dark/default rendering, startup without a portal, owner loss, and restart
+without the keyboard-driven launcher suite.
 
 It starts an isolated headless compositor, creates fixture desktop entries,
 and captures launch requests with a fake Ouro endpoint; it does not launch
@@ -350,14 +356,12 @@ Check the systemd units with an installed `~/.local/bin/ouroctl` and an active
 graphical session:
 
 ```sh
-systemd-analyze --user verify systemd/dev.ouro.shell.{socket,service}
-python3 tests/socket_activation.py
+systemd-analyze --user verify systemd/dev.ouro.shell.service
 ```
 
-The activation test uses temporary units and a private socket, creates no UI,
-and kills only its test service. It verifies on-demand startup, crash recovery
-without replacing the listener, reactivation after service shutdown, and socket
-removal when the socket unit stops. It leaves the live shell untouched.
+The native tests use private development endpoints for diagnostics/reload and
+the standard D-Bus application interface for notification activation. They do
+not install units or restart the live shell.
 
 ## Layout
 

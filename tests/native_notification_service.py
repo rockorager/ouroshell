@@ -11,7 +11,7 @@ import time
 
 from PIL import Image, ImageChops
 from gi.repository import Gio, GLib
-from native_launcher import BINARY, ROOT, call, virtual_pointer, wait_for
+from native_launcher import BINARY, ROOT, Portal, call, development_endpoint, pump as pump_for, virtual_pointer, wait_for
 
 
 def main():
@@ -49,7 +49,7 @@ def main():
                    DBUS_SYSTEM_BUS_ADDRESS=f"unix:path={directory}/no-system-bus")
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("DISPLAY", None)
-        processes, pointer = [], None
+        processes, pointer, portal = [], None, None
         with (artifacts / "native.log").open("w") as log, (artifacts / "signals.log").open("w") as signal_log:
             def start(argv, output=log):
                 process = subprocess.Popen(argv, env=env, stdout=output, stderr=log)
@@ -71,13 +71,9 @@ def main():
                 pointer = virtual_pointer(env["WAYLAND_DISPLAY"])
                 start(["wtype", "-s", "600000"])  # Keep keyboard capability present.
                 time.sleep(.2)
-                settings_path = directory / "ouro/settings.mcp.sock"
-                start([os.environ["OUROSETTINGS_TEST_BINARY"], "--socket", str(settings_path),
-                       "--state", str(directory / "settings.json"), "--idle-ms", "300000"])
-                wait_for(settings_path.exists, "private settings missing")
-                app = start([str(BINARY), "run", str(ROOT / "ouro.json"), "--software"])
-                endpoint = directory / "ourokit/apps/dev.ouro.shell"
-                wait_for(endpoint.exists, "shell missing")
+                portal = Portal(env["DBUS_SESSION_BUS_ADDRESS"], 2)
+                app = start([str(BINARY), "run", str(ROOT / "ouro.json"), "--dev", "--software"])
+                endpoint = development_endpoint(directory)
 
                 bus = Gio.DBusConnection.new_for_address_sync(env["DBUS_SESSION_BUS_ADDRESS"],
                     Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
@@ -183,7 +179,7 @@ def main():
                     time.sleep(.3)
 
                 def capture(name):
-                    time.sleep(.5)
+                    pump_for(.5)
                     status = call(endpoint, "runtime.status")["structuredContent"]
                     assert app.poll() is None and status["diagnostic"] is None, (status, (artifacts / "native.log").read_text())
                     subprocess.run(["grim", "-o", "HEADLESS-1", str(artifacts / f"{name}.png")], env=env, check=True)
@@ -259,9 +255,7 @@ def main():
                     assert not ImageChops.difference(content, Image.new("RGB", content.size, (96, 128, 153))).getbbox(), "DND left a popup visible"
                 signal("NotificationClosed", quiet, "uint32 1")
                 call(endpoint, "notifications.toggle")
-                current = call(settings_path, "settings.get")["structuredContent"]
-                call(settings_path, "settings.set_section", arguments={"expected_revision": current["revision"],
-                    "section": "appearance", "value": {"color_scheme": "dark"}})
+                portal.change(1)
                 capture("center-dark-dnd")
                 click(1214, 170)
                 for index in range(6):
@@ -282,14 +276,16 @@ def main():
                 method("CloseNotification", popup)
                 fixture = directory / "activation.lua"
                 fixture.write_text('''local o = require("ouro")
-return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() return { windows = {
+return o.app { id = "dev.ouro.activation-test", single_instance = true, run = function() return { windows = {
   o.window { id = "main", title = "Notification activation target", width = 500, height = 300,
     content = function() return o.text { key = "message", text = "Activated from a notification" } end },
 } } end }
 ''')
                 start([str(BINARY), "run", str(fixture), "--software"])
-                target = directory / "ourokit/apps/dev.ouro.activation-test"
-                wait_for(target.exists, "activation target missing")
+                def activate_target(token):
+                    bus.call_sync("dev.ouro.activation-test", "/dev/ouro/activation_test", "org.freedesktop.Application",
+                        "Activate", GLib.Variant("(a{sv})", ({"activation-token": GLib.Variant("s", token)},)),
+                        None, Gio.DBusCallFlags.NONE, 5000, None)
                 time.sleep(.7)
                 subprocess.run(["swaymsg", "-s", ipc, '[app_id="dev.ouro.activation-test"] move container to workspace number 2; workspace number 1'], env=env, check=True, stdout=log)
                 def focused_target():
@@ -308,15 +304,13 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                 click(1000, 330)
                 signal("ActionInvoked", actionable, "'default'")
                 token = next(args[1] for member, args in received if member == "ActivationToken" and args[0] == actionable)
-                call(target, "runtime.activate", arguments={"activationToken": token})
+                activate_target(token)
                 wait_for(focused_target, "notification activation did not focus the target on workspace 2")
                 workspaces = json.loads(subprocess.check_output(["swaymsg", "-s", ipc, "-t", "get_workspaces"], env=env))
                 assert any(workspace["num"] == 2 and workspace["focused"] for workspace in workspaces), workspaces
                 capture("activated-workspace")
                 for scheme in ("light", "dark"):
-                    current = call(settings_path, "settings.get")["structuredContent"]
-                    call(settings_path, "settings.set_section", arguments={"expected_revision": current["revision"],
-                        "section": "appearance", "value": {"color_scheme": scheme}})
+                    portal.change(1 if scheme == "dark" else 2)
                     colored = notify("Alex · #design", app_name="Team chat", app_icon="", actions="['default', 'Open']",
                         body="Pushed the latest changes. Take a look when you have a minute.",
                         hints={"desktop-entry": GLib.Variant("s", "fixture-chat")})
@@ -396,7 +390,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     tokens = [args[1] for member, args in received if member == "ActivationToken" and args[0] == menu_id]
                     assert len(tokens) == 1 and tokens[0], "native menu action lost its activation token"
                     if scheme == "light":
-                        call(target, "runtime.activate", arguments={"activationToken": tokens[0]})
+                        activate_target(tokens[0])
                         wait_for(focused_target, "native menu token did not activate the target on workspace 3")
                 maximum_menu = notify("Four available actions for a notification with a deliberately long title",
                     body="Choose an action from this notification, whose longer message also fills both available lines.",
@@ -534,9 +528,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                 # Raw image-data is padded deliberately: tightly packed test
                 # data would not catch a loader which ignores rowstride. The
                 # transparent magenta quadrant also checks that alpha is used.
-                current = call(settings_path, "settings.get")["structuredContent"]
-                call(settings_path, "settings.set_section", arguments={"expected_revision": current["revision"],
-                    "section": "appearance", "value": {"color_scheme": "light"}})
+                portal.change(2)
                 def raw_row(y):
                     pixels = bytearray()
                     for x in range(48):
@@ -568,9 +560,7 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
                     assert color_count(image, (844, 96, 1265, 230), (244, 25, 18)) == 0, "second image slot remains"
                 method("CloseNotification", raw)
 
-                current = call(settings_path, "settings.get")["structuredContent"]
-                call(settings_path, "settings.set_section", arguments={"expected_revision": current["revision"],
-                    "section": "appearance", "value": {"color_scheme": "dark"}})
+                portal.change(1)
                 path_notice = notify("Chrome download image", timeout=800, app_name="Chrome", app_icon="fixture-chat",
                     hints={
                         "desktop-entry": GLib.Variant("s", "fixture-chat"),
@@ -656,6 +646,8 @@ return o.app { id = "dev.ouro.activation-test", actions = {}, run = function() r
             finally:
                 if pointer:
                     pointer.close()
+                if portal:
+                    portal.close()
                 for process in reversed(processes):
                     if process.poll() is None:
                         process.terminate()

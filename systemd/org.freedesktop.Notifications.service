@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.freedesktop.Notifications
+Exec=/bin/sh -c 'exec "$HOME/.local/bin/ouroctl" run "$HOME/.local/share/ouroshell/ouro.json" --mcp'
+SystemdService=dev.ouro.shell.service

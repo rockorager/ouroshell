@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the real shell in a disposable headless Sway, never the live desktop.
 
-Requires sibling Ourokit built, sway, grim, wtype, and Pillow. Optional
+Requires sibling Ourokit built, sway, grim, wtype, Pillow, and PyGObject. Optional
 OUROSHELL_TEST_ARTIFACTS preserves captures and protocol logs.
 """
 import json
@@ -15,9 +15,57 @@ import tempfile
 import threading
 import time
 from PIL import Image, ImageChops
+from gi.repository import Gio, GLib
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT.parent / "ourokit/zig-out/bin/ouroctl"
+
+
+class Portal:
+    service = "org.freedesktop.portal.Desktop"
+    path = "/org/freedesktop/portal/desktop"
+    interface = "org.freedesktop.portal.Settings"
+    namespace = "org.freedesktop.appearance"
+
+    def __init__(self, address, value=1):
+        self.value, self.reads = value, 0
+        self.bus = Gio.DBusConnection.new_for_address_sync(address,
+            Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+        xml = f"""<node><interface name='{self.interface}'>
+          <method name='ReadAll'><arg type='as' direction='in'/><arg type='a{{sa{{sv}}}}' direction='out'/></method>
+          <signal name='SettingChanged'><arg type='s'/><arg type='s'/><arg type='v'/></signal>
+        </interface></node>"""
+        self.registration = self.bus.register_object(self.path,
+            Gio.DBusNodeInfo.new_for_xml(xml).interfaces[0], self.read, None, None)
+        result = self.bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+            "RequestName", GLib.Variant("(su)", (self.service, 4)), None, Gio.DBusCallFlags.NONE, 1000, None)
+        assert result.unpack() == (1,)
+
+    def read(self, bus, sender, path, interface, method, parameters, invocation):
+        assert method == "ReadAll" and parameters.unpack() == ([self.namespace],)
+        self.reads += 1
+        invocation.return_value(GLib.Variant("(a{sa{sv}})", ({
+            self.namespace: {"color-scheme": GLib.Variant("u", self.value)},
+        },)))
+
+    def change(self, value):
+        self.value = value
+        self.bus.emit_signal(None, self.path, self.interface, "SettingChanged",
+            GLib.Variant("(ssv)", (self.namespace, "color-scheme", GLib.Variant("u", value))))
+        self.bus.flush_sync(None)
+
+    def close(self):
+        self.bus.unregister_object(self.registration)
+        self.bus.close_sync(None)
+
+
+def pump(seconds):
+    end = time.monotonic() + seconds
+    context = GLib.MainContext.default()
+    while time.monotonic() < end:
+        while context.pending():
+            context.iteration(False)
+        time.sleep(.005)
 
 
 def virtual_pointer(display):
@@ -62,6 +110,13 @@ def wait_for(check, message):
     raise AssertionError(message)
 
 
+def development_endpoint(directory):
+    wait_for(lambda: list((directory / "ourokit/dev").glob("*")), "development endpoint missing")
+    endpoints = list((directory / "ourokit/dev").glob("*"))
+    assert len(endpoints) == 1, endpoints
+    return endpoints[0]
+
+
 def call(path, name, allow_error=False, arguments=None):
     params = {"name": name, "arguments": arguments or {}, "_meta": {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -101,8 +156,6 @@ def check_frame(image, dark):
 
 def main():
     appearance_only = "--appearance-only" in sys.argv
-    if appearance_only:
-        assert os.environ.get("OUROSETTINGS_TEST_BINARY"), "--appearance-only requires OUROSETTINGS_TEST_BINARY"
     with tempfile.TemporaryDirectory(prefix="ouroshell-native-") as temporary:
         directory = Path(temporary)
         artifacts = Path(os.environ.get("OUROSHELL_TEST_ARTIFACTS", directory / "artifacts"))
@@ -159,42 +212,44 @@ def main():
         shell = None
         pointer = None
         keyboard = None
-        settings = None
+        portal = None
+        bus = None
         with (artifacts / "sway.log").open("wb") as sway_log, (artifacts / "shell.log").open("wb") as shell_log:
             compositor = subprocess.Popen(["sway", "-c", str(config), "-d"], env=env, stdout=sway_log, stderr=sway_log)
             try:
                 wait_for(lambda: list(directory.glob("wayland-*.lock")), "headless compositor did not start")
                 env["WAYLAND_DISPLAY"] = str(next(directory.glob("wayland-*.lock")))[:-5]
-                settings_path = directory / "ouro/settings.mcp.sock"
+                # No service directories: absence cannot activate desktop services.
+                bus_config = directory / "bus.conf"
+                bus_config.write_text('<busconfig><type>session</type><listen>unix:tmpdir=' + temporary +
+                    '</listen><policy context="default"><allow send_destination="*"/>'
+                    '<allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
+                bus = subprocess.Popen(["dbus-daemon", "--nofork", "--print-address=1", f"--config-file={bus_config}"],
+                                       stdout=subprocess.PIPE, stderr=shell_log, text=True)
+                address = bus.stdout.readline().strip()
+                assert address.startswith("unix:"), address
+                env["DBUS_SESSION_BUS_ADDRESS"] = address
 
                 def set_scheme(scheme):
-                    current = call(settings_path, "settings.get")["structuredContent"]
-                    call(settings_path, "settings.set_section", arguments={
-                        "expected_revision": current["revision"], "section": "appearance",
-                        "value": {"color_scheme": scheme},
-                    })
+                    portal.change({"default": 0, "dark": 1, "light": 2}[scheme])
 
-                if settings_binary := os.environ.get("OUROSETTINGS_TEST_BINARY"):
-                    settings = subprocess.Popen([settings_binary, "--socket", str(settings_path),
-                                                 "--state", str(directory / "settings.json"), "--idle-ms", "300000"],
-                                                env=env, stdout=shell_log, stderr=shell_log)
-                    wait_for(settings_path.exists, "isolated settings daemon did not start")
-                    set_scheme("dark")
+                if not appearance_only:
+                    portal = Portal(address)
                 # A headless seat otherwise loses keyboard capability between
                 # wtype invocations. Keep a device present like a real desktop.
                 keyboard = subprocess.Popen(["wtype", "-s", "600000"], env=env)
                 time.sleep(.2)
                 entry = ROOT / ("src/preview.lua" if appearance_only else "ouro.json")
-                shell = subprocess.Popen([str(BINARY), "run", str(entry), "--software"],
+                options = [] if appearance_only else ["--dev"]
+                shell = subprocess.Popen([str(BINARY), "run", str(entry), "--software", *options],
                                          env=env, stdout=shell_log, stderr=shell_log)
-                endpoint = directory / "ourokit/apps/dev.ouro.shell"
                 if not appearance_only:
-                    wait_for(endpoint.exists, "shell MCP socket did not appear")
+                    endpoint = development_endpoint(directory)
 
                 def capture(name):
                     # Fullscreen software compositing is slower than the small
                     # popup; allow queued input, icon loads, and paint to settle.
-                    time.sleep(1.2)
+                    pump(1.2)
                     assert shell.poll() is None, (artifacts / "shell.log").read_text()
                     path = artifacts / f"{name}.png"
                     subprocess.run(["grim", "-o", "HEADLESS-1", str(path)], env=env, check=True)
@@ -207,8 +262,14 @@ def main():
                 if appearance_only:
                     # The shadow and themed icons decode asynchronously on
                     # first presentation; warm them before round-trip checks.
-                    time.sleep(2)
+                    pump(2)
+                    capture("preview-no-portal")
+                    with Image.open(artifacts / "preview-no-portal.png") as image:
+                        check_frame(image, False)
+                    portal = Portal(address)
                     capture("preview-dark")
+                    assert portal.reads >= 2, "both shell tokens and native theme must read the portal"
+                    initial_reads = portal.reads
                     set_scheme("light")
                     capture("preview-light")
                     with Image.open(artifacts / "preview-dark.png") as dark, Image.open(artifacts / "preview-light.png") as light:
@@ -227,6 +288,17 @@ def main():
                             # controls/results and overlay across transitions.
                             for region in ((0, 0, 1280, 40), (0, 175, 1280, 800)):
                                 assert a.crop(region).tobytes() == b.crop(region).tobytes(), "theme did not round-trip"
+                    assert portal.reads == initial_reads, "live signals must not trigger polling or rereads"
+                    portal.close()
+                    portal = None
+                    capture("preview-owner-lost")
+                    with Image.open(artifacts / "preview-owner-lost.png") as image:
+                        check_frame(image, False)
+                    portal = Portal(address)
+                    capture("preview-restarted")
+                    with Image.open(artifacts / "preview-restarted.png") as image:
+                        check_frame(image, True)
+                    assert portal.reads >= 2, "new portal owner was not read"
                     assert (artifacts / "sway.log").read_text().count("new layer surface: namespace ouroshell-preview") == 2, "theme change recreated a layer surface"
                     # Exercise the frame at both clamped dimensions, then
                     # capture a non-default page without executing an action.
@@ -241,7 +313,7 @@ def main():
                     with Image.open(artifacts / "preview-narrow-confirmation.png") as image:
                         check_frame(image, True)
                     assert not launches, "preview sent a real request"
-                    print(f"PASS: raised frame, soft shadow, resize, live dark/light/default palettes and retained surfaces; captures: {artifacts}")
+                    print(f"PASS: portal absence, live dark/light/default, owner loss/restart, retained surfaces, frame/resize; captures: {artifacts}")
                     return
 
                 # The 592×652 padded frame preserves the centered 560×620
@@ -259,7 +331,7 @@ def main():
                     expected = tuple(round(bg * 178 / 255 + tint * 77 / 255)
                                      for bg, tint in zip((96, 128, 153), (17, 17, 19)))
                     assert all(abs(a - b) <= 1 for a, b in zip(backdrop, expected)), (backdrop, expected)
-                    check_frame(image, settings is not None)
+                    check_frame(image, True)
                     line_y = top + 48 + 16 + 32
                     accent = image.getpixel((left + 18, line_y))
                     assert accent != image.getpixel((left + 150, line_y)), "scope underline collapsed"
@@ -267,7 +339,10 @@ def main():
                     while span < 100 and image.getpixel((left + span, line_y)) == accent:
                         span += 1
                     assert 40 <= span < 100, ("scope underline must span the padded All label", span)
-                assert call(endpoint, "runtime.reload", allow_error=True).get("isError")
+                # Reload now accepts structural window changes. The fresh Lua
+                # state closes the launcher; reopen it before testing input.
+                call(endpoint, "runtime.reload")
+                call(endpoint, "launcher.toggle")
                 keys("Fixture")
                 searched = capture("search")
                 assert searched != baseline
@@ -283,7 +358,7 @@ def main():
                     assert before.crop(upper_rows).tobytes() == after.crop(upper_rows).tobytes(), "Up scrolled rows that were already visible"
                     lower_rows = (left, first_row + 5 * 60, right, first_row + 7 * 60)
                     assert before.crop(lower_rows).tobytes() != after.crop(lower_rows).tobytes(), "Up did not move the selection highlight"
-                if settings:
+                if portal:
                     set_scheme("light")
                     capture("search-light")
                     with Image.open(artifacts / "search-light.png") as light, Image.open(artifacts / "selection-up.png") as dark:
@@ -407,7 +482,7 @@ def main():
                 keys("-k", "Escape", "-k", "Escape")
                 # Return home after the asynchronous themed icons have loaded.
                 capture("preview")
-                if settings:
+                if portal:
                     set_scheme("light")
                     capture("preview-light")
                     set_scheme("dark")
@@ -428,9 +503,11 @@ def main():
                 if keyboard:
                     keyboard.terminate()
                     keyboard.wait(timeout=10)
-                if settings:
-                    settings.terminate()
-                    settings.wait(timeout=10)
+                if portal:
+                    portal.close()
+                if bus:
+                    bus.terminate()
+                    bus.wait(timeout=10)
                 compositor.terminate()
                 compositor.wait(timeout=10)
                 stopping.set()

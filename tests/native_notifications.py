@@ -8,11 +8,10 @@ import tempfile
 import time
 
 from PIL import Image, ImageChops
-from native_launcher import BINARY, ROOT, call, virtual_pointer, wait_for
+from native_launcher import BINARY, ROOT, Portal, call, development_endpoint, pump, virtual_pointer, wait_for
 
 
 def main():
-    settings_binary = os.environ["OUROSETTINGS_TEST_BINARY"]
     with tempfile.TemporaryDirectory(prefix="ouroshell-notifications-") as temporary:
         directory = Path(temporary)
         artifacts = Path(os.environ.get("OUROSHELL_TEST_ARTIFACTS", directory / "artifacts"))
@@ -25,7 +24,7 @@ def main():
                    DBUS_SYSTEM_BUS_ADDRESS=f"unix:path={directory}/system-bus")
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("DISPLAY", None)
-        app = settings = pointer = None
+        app = bus = portal = pointer = None
         with (artifacts / "native.log").open("w") as log:
             sway = subprocess.Popen(["sway", "-c", str(config)], env=env, stdout=log, stderr=log)
             try:
@@ -34,15 +33,13 @@ def main():
                 wait_for(lambda: list(directory.glob("sway-ipc.*.sock")), "missing private Sway IPC socket")
                 ipc = str(next(directory.glob("sway-ipc.*.sock")))
                 pointer = virtual_pointer(env["WAYLAND_DISPLAY"])
-                settings_path = directory / "ouro/settings.mcp.sock"
-                settings = subprocess.Popen([settings_binary, "--socket", str(settings_path),
-                                             "--state", str(directory / "settings.json"), "--idle-ms", "300000"],
-                                            env=env, stdout=log, stderr=log)
-                wait_for(settings_path.exists, "private settings did not start")
-                app = subprocess.Popen([str(BINARY), "run", str(ROOT / "src/notification-preview.lua"), "--software"],
+                bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", f"--address={env['DBUS_SESSION_BUS_ADDRESS']}"],
                                        env=env, stdout=log, stderr=log)
-                endpoint = directory / "ourokit/apps/dev.ouro.notifications.preview"
-                wait_for(endpoint.exists, "preview did not start")
+                wait_for((directory / "session-bus").exists, "private bus did not start")
+                portal = Portal(env["DBUS_SESSION_BUS_ADDRESS"], 2)
+                app = subprocess.Popen([str(BINARY), "run", str(ROOT / "src/notification-preview.lua"), "--dev", "--software"],
+                                       env=env, stdout=log, stderr=log)
+                endpoint = development_endpoint(directory)
 
                 def command(text):
                     result = json.loads(subprocess.check_output(["swaymsg", "-s", ipc, "-t", "command", text], env=env))
@@ -57,7 +54,7 @@ def main():
                     time.sleep(.2)
 
                 def capture(name):
-                    time.sleep(.7)
+                    pump(.7)
                     assert app.poll() is None, (artifacts / "native.log").read_text()
                     status = call(endpoint, "runtime.status")["structuredContent"]
                     assert status["diagnostic"] is None, status
@@ -74,9 +71,7 @@ def main():
                 expanded = capture("expanded")
                 assert initial.crop((860, 250, 1245, 500)).tobytes() == expanded.crop((860, 250, 1245, 500)).tobytes()
 
-                current = call(settings_path, "settings.get")["structuredContent"]
-                call(settings_path, "settings.set_section", arguments={"expected_revision": current["revision"],
-                     "section": "appearance", "value": {"color_scheme": "dark"}})
+                portal.change(1)
                 dark = capture("center-dark")
                 assert initial.getpixel((850, 400))[0] > 200 and dark.getpixel((850, 400))[0] < 60
 
@@ -105,7 +100,9 @@ def main():
                 assert app.wait(timeout=5) == 0
                 print(f"PASS: native notification preview clicks, themes, DND, popup/expiry, clear/reset, and close; captures: {artifacts}")
             finally:
-                for process in (app, settings):
+                if portal:
+                    portal.close()
+                for process in (app, bus):
                     if process and process.poll() is None:
                         process.terminate()
                         process.wait(timeout=10)

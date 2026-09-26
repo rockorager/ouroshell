@@ -1,63 +1,115 @@
 package.path = "src/?.lua;" .. package.path
-local task, callback, delay, fail_read, offline
-local selection = { exists = true, value = "dark" }
-local ouro = {
-  tokens = { light = {}, dark = {}, palette = { light = {}, dark = {} } },
-  xdg = { runtime_dir = "/isolated" }, json = { decode = function(value) return value end },
-  signal = function(value)
-    return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
-  end,
-  spawn = function(fn) task = coroutine.create(fn) end,
-  sleep = function(ms) delay = ms; coroutine.yield() end,
-  mcp = {
-    subscribe = function(address, uri, fn)
-      assert(address == "unix:/isolated/ouro/settings.mcp.sock")
-      assert(uri == "ouro://settings/appearance/color_scheme")
-      if offline then error("offline") end
-      callback = fn
-      fn({ method = "notifications/subscriptions/acknowledged" })
-      coroutine.yield()
-      error("disconnected")
-    end,
-    request = function(_, method, params)
-      assert(callback and method == "resources/read" and params.uri == "ouro://settings/appearance/color_scheme")
-      if fail_read then return { error = { message = "read failed" } } end
-      return { result = { contents = { { text = selection } } } }
-    end,
-  },
-}
+local tasks, streams, reads, offline = {}, {}, 0, false
+local service, namespace = "org.freedesktop.portal.Desktop", "org.freedesktop.appearance"
+local ouro = { tokens = { light = {}, dark = {}, palette = { light = {}, dark = {} } }, dbus = {} }
+ouro.signal = function(value)
+  return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
+end
+ouro.spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end
+local bus = {}
+function bus:close() self.closed = true end
+function bus:subscribe(match)
+  assert(not self.closed)
+  local stream = {}
+  function stream:close() self.closed = true end
+  function stream:next() return coroutine.yield() end
+  if match.member == "NameOwnerChanged" then
+    assert(match.sender == "org.freedesktop.DBus" and match.path == "/org/freedesktop/DBus")
+  else
+    assert(match.member == "SettingChanged" and match.sender == service)
+    assert(match.path == "/org/freedesktop/portal/desktop" and match.interface == "org.freedesktop.portal.Settings")
+  end
+  streams[match.member] = stream
+  return setmetatable(stream, { __close = stream.close })
+end
+function bus:call(request)
+  assert(streams.NameOwnerChanged and streams.SettingChanged, "subscribe before reading")
+  assert(request.destination == service and request.path == "/org/freedesktop/portal/desktop")
+  assert(request.interface == "org.freedesktop.portal.Settings" and request.member == "ReadAll")
+  assert(request.signature == "as" and #request.args[1] == 1 and request.args[1][1] == namespace)
+  assert(request.timeout_ms == 5000)
+  reads = reads + 1
+  return coroutine.yield()
+end
+ouro.dbus.connect = function(which)
+  assert(which == "session")
+  if offline then return nil end
+  return setmetatable(bus, { __close = bus.close })
+end
 package.loaded.ouro = ouro
 local appearance = require("appearance")
-assert(appearance.colors() == ouro.tokens.light, "startup fallback must match Ourokit")
-appearance.connect()
-assert(coroutine.resume(task))
-assert(appearance.colors() == ouro.tokens.dark, "acknowledgment must fetch the initial value")
-for _, value in ipairs({ "light", "dark", "default" }) do
-  selection.value = value
-  callback({ method = "notifications/resources/updated" })
+local function resume(task, message)
+  local ok, err = coroutine.resume(tasks[task], message)
+  assert(ok, err)
+end
+local function expect(name)
   local colors, palette = appearance.colors()
-  local expected = value == "dark" and "dark" or "light"
-  assert(colors == ouro.tokens[expected] and palette == ouro.tokens.palette[expected])
+  assert(colors == ouro.tokens[name] and palette == ouro.tokens.palette[name], "expected " .. name)
 end
-selection = { exists = false }
-callback({ method = "notifications/resources/updated" })
-assert(appearance.colors() == ouro.tokens.light)
-selection = { exists = true, value = "dark" }
-callback({ method = "notifications/resources/updated" })
-fail_read = true
-assert(not pcall(callback, { method = "notifications/resources/updated" }))
-assert(appearance.colors() == ouro.tokens.dark, "failed read must retain the last palette")
+local function variant(value, signature) return { signature = signature or "u", value = value } end
+local function snapshot(value, sender)
+  return { sender = sender or ":1.2", signature = "a{sa{sv}}", args = { {
+    { "unrelated.namespace", { { "color-scheme", variant(1) } } },
+    { namespace, value and { { "contrast", variant(1) }, { "color-scheme", value } } or {} },
+  } } }
+end
+local function changed(value, key, sender)
+  resume(2, { sender = sender or ":1.2", signature = "ssv", args = { namespace, key or "color-scheme", value } })
+end
+local function owner(previous, current)
+  resume(1, { signature = "sss", args = { service, previous, current } })
+end
+
+expect("light")
+appearance.connect()
+resume(1) -- Register matches and wait for owners.
+resume(2) -- Wait for preference changes.
+resume(3) -- Initial asynchronous read.
+resume(3, snapshot(variant(1)))
+expect("dark")
+changed(variant(2)); expect("light")
+changed(variant(1)); expect("dark")
+changed(variant(0)); expect("light")
+changed(variant(1, "s")); expect("light")
+changed(variant(99)); expect("light")
+changed(variant(1)); expect("dark")
+changed(variant(2), "contrast"); expect("dark")
+resume(2, { sender = ":1.2", signature = "ssv", args = { "unrelated.namespace", "color-scheme", variant(2) } })
+expect("dark")
+assert(reads == 1, "signals must not poll or reread")
+
+owner(":1.2", ""); expect("light")
+changed(variant(1)); expect("light") -- Queued signal from departed owner.
+assert(#tasks == 3, "absence must wait for an owner, not poll")
+owner("", ":1.3")
+resume(4)
+owner(":1.3", ":1.4") -- Replace owner while its read is pending.
+resume(5)
+resume(5, snapshot(variant(2), ":1.4"))
+resume(4, snapshot(variant(1), ":1.3")); expect("light")
+changed(variant(1), nil, ":1.3"); expect("light")
+changed(variant(1), nil, ":1.4"); expect("dark")
+
+owner(":1.4", ":1.5")
+resume(6)
+changed(variant(1), nil, ":1.5")
+resume(6, snapshot(variant(2), ":1.5")); expect("dark") -- Signal beats stale snapshot.
+owner(":1.5", ":1.6")
+resume(7)
+resume(7, snapshot(nil, ":1.6")); expect("light") -- Missing key.
+owner(":1.6", ":1.7")
+resume(8)
+resume(8); expect("light") -- Failed read; still listening.
+changed(variant(1), nil, ":1.7"); expect("dark")
+owner(":1.7", ":1.8")
+resume(9)
+resume(1); expect("light") -- Disconnect retires outstanding reads.
+resume(9, snapshot(variant(1), ":1.8")); expect("light")
+resume(2)
+assert(bus.closed and streams.NameOwnerChanged.closed and streams.SettingChanged.closed)
 offline = true
-assert(coroutine.resume(task))
-assert(delay == 250)
-for _, expected in ipairs({ 500, 1000, 2000, 4000, 8000, 10000, 10000 }) do
-  assert(coroutine.resume(task))
-  assert(delay == expected and appearance.colors() == ouro.tokens.dark)
-end
-offline, fail_read = false, false
-selection.value = "light"
-assert(coroutine.resume(task))
-assert(appearance.colors() == ouro.tokens.light, "reconnect must fetch current settings")
-assert(coroutine.resume(task))
-assert(delay == 250, "successful read must reset retry delay")
-print("PASS: appearance initial read, live palettes, defaults, failures, and reconnection")
+appearance.connect()
+resume(10)
+expect("light")
+assert(coroutine.status(tasks[10]) == "dead", "unavailable bus must not block startup or poll")
+print("PASS: portal initial read, typed live settings, fallback, owner replacement, stale replies, and disconnect")

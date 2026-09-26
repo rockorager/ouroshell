@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 ourokit="$(dirname "$root")/ourokit"
-ourokit_revision=04ce8d2645ba70b39e25a7e3bd19da383af2eafb
+ourokit_revision=d24c2f07ea206b4fcf4703954e4382f000016d8f
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$HOME/.cache/zig}"
 scratch="$(mktemp -d)"
@@ -12,7 +12,7 @@ SECONDS=0
 
 echo 'Installing missing native build and headless-test packages'
 packages=(build-essential pkg-config curl ca-certificates git xz-utils python3
-  python3-pil lua5.4 sway grim wtype adwaita-icon-theme libfontconfig1-dev
+  python3-pil python3-gi gir1.2-glib-2.0 dbus-daemon lua5.4 sway grim wtype adwaita-icon-theme libfontconfig1-dev
   libfreetype-dev libxkbcommon-dev libvulkan-dev glslc)
 missing=()
 for package in "${packages[@]}"; do
