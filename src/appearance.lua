@@ -33,10 +33,15 @@ function M.connect()
     local function refresh()
       revision = revision + 1
       local reading = revision
-      local reply = bus:call {
-        destination = service, path = path, interface = interface,
-        member = "ReadAll", signature = "as", args = { { namespace } }, timeout_ms = 5000,
-      }
+      local reply, failure
+      repeat
+        reply, failure = bus:call {
+          destination = service, path = path, interface = interface,
+          member = "ReadAll", signature = "as", args = { { namespace } }, timeout_ms = 5000,
+        }
+        -- A slow portal, for example one still starting at login, is asked
+        -- again; any other failure falls back to light below.
+      until reply or not failure or failure.kind ~= "timeout" or revision ~= reading
       -- A newer signal or owner supersedes an in-flight snapshot.
       if revision ~= reading then return end
       local value

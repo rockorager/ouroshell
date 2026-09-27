@@ -37,8 +37,8 @@ ouro.dbus.connect = function(which)
   return setmetatable(bus, { __close = bus.close })
 end
 local appearance = require("appearance")
-local function resume(task, message)
-  local ok, err = coroutine.resume(tasks[task], message)
+local function resume(task, ...)
+  local ok, err = coroutine.resume(tasks[task], ...)
   assert(ok, err)
 end
 local function expect(name)
@@ -98,7 +98,10 @@ resume(7)
 resume(7, snapshot(nil, ":1.6")); expect("light") -- Missing key.
 owner(":1.6", ":1.7")
 resume(8)
-resume(8); expect("light") -- Failed read; still listening.
+resume(8, nil, { kind = "timeout", name = "Timeout", message = "timed out" })
+assert(reads == 7 and coroutine.status(tasks[8]) == "suspended", "a timed-out read must be retried")
+resume(8, nil, { kind = "remote", name = "org.freedesktop.DBus.Error.Failed", message = "failed" })
+expect("light") -- Failed read; still listening.
 changed(variant(1), nil, ":1.7"); expect("dark")
 owner(":1.7", ":1.8")
 resume(9)
@@ -115,5 +118,5 @@ resume(1) -- Reconnect: register matches, then listen and read again.
 resume(10)
 resume(11)
 resume(11, snapshot(variant(1), ":1.9")); expect("dark")
-assert(reads == 8, "reconnect must read the portal again")
+assert(reads == 9, "reconnect must read the portal again")
 print("PASS: portal initial read, typed live settings, fallback, owner replacement, stale replies, and disconnect")

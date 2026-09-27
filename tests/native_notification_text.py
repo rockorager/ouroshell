@@ -7,7 +7,7 @@ import tempfile
 import time
 
 from gi.repository import Gio, GLib
-from native_launcher import BINARY, ROOT, call, wait_for
+from native_launcher import BINARY, ROOT, call, development_endpoint, wait_for
 
 
 def main():
@@ -36,9 +36,9 @@ def main():
                 start(["sway", "-c", str(config)])
                 wait_for(lambda: list(directory.glob("wayland-*.lock")), "headless Sway missing")
                 env["WAYLAND_DISPLAY"] = str(next(directory.glob("wayland-*.lock")))[:-5]
-                app = start([str(BINARY), "run", str(ROOT / "ouro.json")])
-                endpoint = directory / "ourokit/apps/dev.ouro.shell"
-                wait_for(endpoint.exists, "shell missing")
+                # runtime.status is a development diagnostic, not a production action.
+                app = start([str(BINARY), "run", str(ROOT / "ouro.json"), "--dev"])
+                endpoint = development_endpoint(directory)
                 bus = Gio.DBusConnection.new_for_address_sync(env["DBUS_SESSION_BUS_ADDRESS"],
                     Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
                 time.sleep(1)
