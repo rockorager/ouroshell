@@ -12,7 +12,8 @@ The workspace list scrolls horizontally when space is tight, leaving room for
 the clock. The round button at the left opens the global launcher.
 
 The clock follows Keywork's format (`Thu Sep 10  04:32 PM`) and refreshes at the
-next minute boundary. Ourokit owns the Wayland connection, rendering, event
+next minute boundary. Timers stop during suspend, so logind's `PrepareForSleep`
+resume signal refreshes and realigns it immediately. Ourokit owns the Wayland connection, rendering, event
 loop, Lua VM, and application lifecycle; this repository contains the shell's Lua.
 
 The battery indicator uses UPower's combined display device over `ouro.dbus`
@@ -38,7 +39,9 @@ or later: `ouro.time`, `ouro.date`, `ouro.spawn`, edge-to-edge layer content,
 also requires layer-surface `background`/`background_effect`, styled boxes,
 text-input `placeholder`/`label`, `ouro.stack`, and image fill dimensions.
 The battery and network indicators require Ourokit's [D-Bus client](https://github.com/rockorager/ourokit/commit/7f7db21c7d05)
-and running UPower and NetworkManager services, respectively.
+and running UPower and NetworkManager services, respectively. D-Bus
+subscriptions use `close_on_owner_change`, which requires Ourokit
+[ba90bb8](https://github.com/rockorager/ourokit/commit/ba90bb8f8f0d) or later.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 
 ```sh
@@ -152,8 +155,11 @@ working directories are preserved with `env --chdir=DIR -- ...`. Terminal
 entries use Monstar's explicit `monstar -e COMMAND ARG...` form. DBus-only
 entries without `Exec` are not presented, and `TryExec` is deliberately ignored.
 
-Visibility is a signal read by the reactive `windows()` declaration. The bar
-stays mounted while the launcher window comes and goes. Development reload
+The launcher, notification center and notification popup are mutually
+exclusive. One `overlay` signal in `src/application.lua` names whichever is
+showing, and the reactive `windows()` declaration derives the windows from it.
+A notification never replaces the launcher or the open center; it stays in
+history instead. The bar stays mounted while overlays come and go. Development reload
 accepts structural window changes and resets the launcher's Lua state.
 
 Ourokit pins Wayring's destroyed-object dispatch fix, which is required to
@@ -195,6 +201,7 @@ Run the Lua behavior checks (requires a standalone Lua interpreter):
 
 ```sh
 lua tests/bar.lua
+lua tests/clock.lua
 lua tests/launcher.lua
 lua tests/appearance.lua
 lua tests/battery.lua
@@ -295,8 +302,8 @@ focuses it. Notifications without a default action have no implicit app-launch
 fallback. Expired notifications remain readable but cannot invoke stale actions.
 
 The daemon supports replacement, expiration, critical/resident/transient hints,
-and notification closure signals. It advertises plain-text bodies and actions,
-not markup or body-image attachments. History and DND are in memory only.
+and notification closure signals. It advertises plain-text bodies, actions,
+`icon-static` and `persistence`, not markup or body-image attachments. History and DND are in memory only.
 History is limited to 100 entries, actions to four per notification, and pending
 expiry timers to 64. Critical notifications do not expire automatically.
 
@@ -366,9 +373,17 @@ not install units or restart the live shell.
 ## Layout
 
 - `ouro.json` declares the application identity and entrypoint.
-- `src/application.lua` owns the workspace connection, clock task, and panel.
-- `src/bar.lua` renders workspace state and time.
+- `src/application.lua` wires the services, owns the overlay signal, and declares windows.
+- `src/config.lua` holds desktop choices: icon theme and terminal command.
+- `src/dbus_support.lua` supervises D-Bus sessions: reconnect with backoff, errors, dictionaries.
+- `src/appearance.lua` follows the Settings portal's color scheme.
+- `src/clock.lua` keeps minute-aligned local time across suspend.
+- `src/catalog.lua` loads the desktop-entry catalog shared by the launcher and notifications.
+- `src/bar.lua` renders workspace state and status.
 - `src/battery.lua` owns the UPower subscription and battery indicator.
 - `src/network.lua` owns the NetworkManager subscription and connectivity indicator.
 - `src/launcher.lua` owns launcher search, state, launch policy, and content.
-- `src/preview.lua` supplies interactive visual fixtures.
+- `src/notifications.lua` implements the `org.freedesktop.Notifications` daemon.
+- `src/notification_center.lua` holds notification history and renders cards, popups and the center.
+- `src/preview.lua` and `src/notification-preview.lua` supply interactive visual fixtures.
+- `tests/fake_ouro.lua` is the shared stand-in for the `ouro` module in Lua tests.

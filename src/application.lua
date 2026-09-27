@@ -3,25 +3,37 @@ local bar = require("bar")
 local launcher = require("launcher")
 local appearance = require("appearance")
 local battery = require("battery")
+local catalog = require("catalog")
+local clock = require("clock")
 local network = require("network")
 local notifications = require("notifications")
 
--- This must outlive builds: windows() reads it reactively and never yields.
-local launcher_visible = ouro.signal(false)
+-- These must outlive builds: windows() reads them reactively and never yields.
+-- The launcher, notification center and notification popup are mutually
+-- exclusive, so one overlay signal names whichever is showing.
+local overlay = ouro.signal(nil)
+local applications = catalog.new()
+local notices = notifications.new { overlay = overlay, applications = applications.entries }
 local launcher_state
-local notices = notifications.new(function() return launcher_state and launcher_state.entries() or {} end)
 
-local function dismiss_launcher() launcher_visible:set(false) end
+local function launcher_open()
+  local current = overlay()
+  return current ~= nil and current.kind == "launcher"
+end
+local function dismiss_launcher()
+  if launcher_open() then overlay:set(nil) end
+end
 local function toggle_launcher()
-  notices.close_center()
-  notices.popup:set(nil)
-  if not launcher_visible() and launcher_state then launcher_state.open() end
-  launcher_visible:set(not launcher_visible())
+  if launcher_open() then
+    overlay:set(nil)
+  elseif launcher_state then
+    launcher_state.open()
+    overlay:set({ kind = "launcher" })
+  end
   return {}
 end
 
 local function toggle_notifications()
-  dismiss_launcher()
   notices.toggle()
   return {}
 end
@@ -48,16 +60,9 @@ return ouro.app {
     local power = battery.connect()
     local connectivity = network.connect()
     local workspaces = ouro.shell.workspaces.connect()
-    local clock_format = "%a %b %d  %I:%M %p"
-    local clock = ouro.signal(ouro.date(clock_format))
-    launcher_state = launcher.new { dismiss = dismiss_launcher }
-    launcher_state.load()
-    ouro.spawn(function()
-      while true do
-        ouro.sleep((60 - ouro.time() % 60) * 1000)
-        clock:set(ouro.date(clock_format))
-      end
-    end)
+    local time = clock.connect()
+    launcher_state = launcher.new { catalog = applications, dismiss = dismiss_launcher }
+    applications.load()
 
     local panel = ouro.layer_surface {
         id = "panel",
@@ -70,12 +75,16 @@ return ouro.app {
         exclusive_zone = bar.height,
         keyboard_interactivity = "none",
         content = function(output)
-          return bar.content(workspaces(), clock(), output, toggle_launcher, power(), connectivity(), toggle_notifications, notices.quiet())
+          return bar.content {
+            workspaces = workspaces(), time = time(), output = output,
+            open_launcher = toggle_launcher, power = power(), connectivity = connectivity(),
+            open_notifications = toggle_notifications, quiet = notices.store.quiet(),
+          }
         end,
     }
     return { windows = function()
       local windows = { panel }
-      if launcher_visible() then
+      if launcher_open() then
         windows[#windows + 1] = ouro.layer_surface {
           id = "launcher", namespace = "ouroshell-launcher", layer = "overlay",
           width = 0, height = 0, anchors = { "top", "bottom", "left", "right" }, exclusive_zone = 0,

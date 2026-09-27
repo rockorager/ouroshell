@@ -1,5 +1,7 @@
 local ouro = require("ouro")
 local appearance = require("appearance")
+local config = require("config")
+local support = require("dbus_support")
 local f = ouro.tokens.foundation
 local M = {}
 local service = "org.freedesktop.NetworkManager"
@@ -53,14 +55,10 @@ function M.read(bus)
   local watched = {}
   local function get(path, interface)
     watched[path] = true
-    local reply, failure = bus:call {
+    return support.properties(support.need(bus:call {
       destination = service, path = path, interface = "org.freedesktop.DBus.Properties",
       member = "GetAll", signature = "s", args = { interface }, timeout_ms = 5000,
-    }
-    assert(reply, failure and failure.message)
-    local values = {}
-    for _, pair in ipairs(reply.args[1]) do values[pair[1]] = pair[2].value end
-    return values
+    }).args[1])
   end
   local manager = get(root, service)
   local strength
@@ -82,50 +80,28 @@ end
 
 function M.connect()
   local state = ouro.signal(nil)
-  ouro.spawn(function()
-    local retry = 1000
-    while true do
-      pcall(function()
-        local connection, failure = ouro.dbus.connect("system")
-        assert(connection, failure and failure.message)
-        local bus <close> = connection
-        local owner_stream, owner_error = bus:subscribe {
-          sender = "org.freedesktop.DBus", path = "/org/freedesktop/DBus",
-          interface = "org.freedesktop.DBus", member = "NameOwnerChanged",
-        }
-        assert(owner_stream, owner_error and owner_error.message)
-        local owners <close> = owner_stream
-        ouro.spawn(function()
-          while true do
-            local message = owners:next()
-            if not message then bus:close(); return end
-            if message.args[1] == service and message.args[2] ~= "" then bus:close(); return end
-          end
-        end)
-        local stream, stream_error = bus:subscribe {
-          sender = service, interface = "org.freedesktop.DBus.Properties", member = "PropertiesChanged",
-        }
-        assert(stream, stream_error and stream_error.message)
-        local changes <close> = stream
-        local watched
-        local function refresh()
-          local snapshot
-          snapshot, watched = M.read(bus)
-          state:set(snapshot)
-          retry = 1000
-        end
-        refresh() -- Subscribe before reading, including AP changes during a roam.
-        while true do
-          local message, next_error = changes:next()
-          assert(message, next_error and next_error.message)
-          if watched[message.path] then refresh() end
-        end
-      end)
-      state:set(nil)
-      ouro.sleep(retry)
-      retry = math.min(retry * 2, 30000)
-    end
-  end)
+  support.supervise { bus = "system",
+    session = function(bus, healthy)
+      -- A NetworkManager restart closes the stream, ending the session and reconnecting.
+      local changes <close> = support.need(bus:subscribe {
+        sender = service, interface = "org.freedesktop.DBus.Properties",
+        member = "PropertiesChanged", close_on_owner_change = true,
+      })
+      local watched
+      local function refresh()
+        local snapshot
+        snapshot, watched = M.read(bus)
+        state:set(snapshot)
+        healthy()
+      end
+      refresh() -- Subscribe before reading, including AP changes during a roam.
+      while true do
+        local message = support.need(changes:next())
+        if watched[message.path] then refresh() end
+      end
+    end,
+    down = function() state:set(nil) end,
+  }
   return state
 end
 
@@ -135,7 +111,7 @@ function M.content(state)
   local color = state.warning and palette.amber.step_11
     or state.muted and theme.muted_foreground or theme.sidebar_foreground
   return ouro.row { key = "network", gap = f.spacing_1, cross_alignment = "center", children = {
-    ouro.xdg.icon { key = "icon", name = state.icon, theme = "Adwaita",
+    ouro.xdg.icon { key = "icon", name = state.icon, theme = config.icon_theme,
       width = f.spacing_4, height = f.spacing_4, tint = color, alt = state.description or state.label },
     state.label ~= "Wi-Fi" and ouro.text {
       key = "label", text = state.label, foreground = color, size = f.typography_3, max_lines = 1,

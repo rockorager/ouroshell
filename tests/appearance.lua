@@ -1,11 +1,11 @@
-package.path = "src/?.lua;" .. package.path
-local tasks, streams, reads, offline = {}, {}, 0, false
+package.path = "src/?.lua;tests/?.lua;" .. package.path
+local tasks, streams, reads, offline, delay = {}, {}, 0, false, nil
 local service, namespace = "org.freedesktop.portal.Desktop", "org.freedesktop.appearance"
-local ouro = { tokens = { light = {}, dark = {}, palette = { light = {}, dark = {} } }, dbus = {} }
-ouro.signal = function(value)
-  return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
-end
-ouro.spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end
+local ouro = require("fake_ouro").install {
+  tokens = { light = {}, dark = {}, palette = { light = {}, dark = {} } },
+  spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end,
+  sleep = function(ms) delay = ms; coroutine.yield() end,
+}
 local bus = {}
 function bus:close() self.closed = true end
 function bus:subscribe(match)
@@ -33,10 +33,9 @@ function bus:call(request)
 end
 ouro.dbus.connect = function(which)
   assert(which == "session")
-  if offline then return nil end
+  if offline then return nil, { message = "offline" } end
   return setmetatable(bus, { __close = bus.close })
 end
-package.loaded.ouro = ouro
 local appearance = require("appearance")
 local function resume(task, message)
   local ok, err = coroutine.resume(tasks[task], message)
@@ -107,9 +106,14 @@ resume(1); expect("light") -- Disconnect retires outstanding reads.
 resume(9, snapshot(variant(1), ":1.8")); expect("light")
 resume(2)
 assert(bus.closed and streams.NameOwnerChanged.closed and streams.SettingChanged.closed)
+assert(delay == 1000, "bus loss must reconnect after a backoff")
 offline = true
-appearance.connect()
+resume(1); expect("light")
+assert(delay == 2000, "an unavailable bus must back off, not block startup")
+offline, bus.closed, streams = false, false, {}
+resume(1) -- Reconnect: register matches, then listen and read again.
 resume(10)
-expect("light")
-assert(coroutine.status(tasks[10]) == "dead", "unavailable bus must not block startup or poll")
+resume(11)
+resume(11, snapshot(variant(1), ":1.9")); expect("dark")
+assert(reads == 8, "reconnect must read the portal again")
 print("PASS: portal initial read, typed live settings, fallback, owner replacement, stale replies, and disconnect")

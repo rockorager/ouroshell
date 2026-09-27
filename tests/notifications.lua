@@ -1,16 +1,24 @@
-package.path = "src/?.lua;" .. package.path
+package.path = "src/?.lua;tests/?.lua;" .. package.path
 local tasks, exited, now = {}, nil, 100
 local building, deferred = false, {}
-local ouro = { tokens = {
-  foundation = setmetatable({}, { __index = function() return 16.0 end }),
-  palette = { transparent = "transparent" },
-}, xdg = {} }
-ouro.signal = function(value)
-  return setmetatable({ set = function(_, next_value)
-    assert(not building, "signals cannot be written during a build transaction")
-    value = next_value
-  end }, { __call = function() return value end })
-end
+local ouro = require("fake_ouro").install {
+  tokens = {
+    foundation = setmetatable({}, { __index = function() return 16.0 end }),
+    palette = { transparent = "transparent" },
+  },
+  -- Ourokit rejects signal writes while a build transaction is running.
+  signal = function(value)
+    return setmetatable({ set = function(_, next_value)
+      assert(not building, "signals cannot be written during a build transaction")
+      value = next_value
+    end }, { __call = function() return value end })
+  end,
+  spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end,
+  sleep = function(ms) assert(ms == 250); coroutine.yield() end,
+  time = function() return now end,
+  exit = function(code) exited = code end,
+}
+-- Components mount once per key, so their signals survive re-renders.
 ouro.component = function(initialize)
   local mounts = {}
   return function(props)
@@ -36,14 +44,6 @@ ouro.component = function(initialize)
     return result
   end
 end
-for _, name in ipairs({ "app", "layer_surface", "row", "column", "box", "scroll", "virtual_list", "text", "button", "switch", "image" }) do
-  ouro[name] = function(props) return props end
-end
-ouro.xdg.icon = function(props) return props end
-ouro.spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end
-ouro.sleep = function(ms) assert(ms == 250); coroutine.yield() end
-ouro.time = function() return now end
-ouro.exit = function(code) exited = code end
 local native_menu, fail_popup
 ouro.popup = function(props)
   assert(math.type(props.width) == "integer" and math.type(props.height) == "integer", "native popup dimensions must be integers")
@@ -57,7 +57,6 @@ ouro.popup = function(props)
   native_menu = handle
   return handle
 end
-package.loaded.ouro = ouro
 package.loaded.appearance = { connect = function() end, colors = function()
   return { sidebar = "sidebar", card = "card", ring = "focus", accent_hover = "hover" }, { amber = { step_7 = "amber" } }
 end }
@@ -69,6 +68,12 @@ local first = state.add(fixture)
 state.add { app = "Messages", title = "Two" }
 local last = state.add { app = "Files", title = "Three" }
 assert(fixture.id == nil and first.id ~= last.id)
+assert(state.get(first.id) == first and state.get(999) == nil)
+state.expire(first.id)
+local archived = state.get(first.id)
+assert(archived ~= first and archived.expired and not first.expired and archived.title == "One",
+  "expiry must store a new item and leave the original unchanged")
+assert(#state.items() == 3 and state.items()[3] == archived, "expiry must keep the history position")
 local groups = state.groups()
 assert(#groups == 2 and groups[1].app == "Files" and groups[2].app == "Messages")
 assert(groups[1].items[1].title == "Three" and groups[1].items[2].title == "One")
@@ -76,7 +81,7 @@ state.toggle_group("Files")
 state.toggle_group("Messages")
 state.toggle_group("Files")
 assert(not state.collapsed().Files and state.collapsed().Messages)
-state.dismiss(last.id)
+state.remove(last.id)
 assert(state.groups()[1].app == "Messages", "group order must follow its newest remaining notification")
 assert(#state.items() == 2 and state.items()[2].title == "One")
 state.quiet:set(true)
@@ -212,7 +217,13 @@ popup_item.body, popup_item.default_action, popup_item.actions = "", false, {}
 popup = center.popup(popup_item, {})
 assert(not find(popup, "notification-image") and not find(popup, "body") and not find(popup, "open"))
 assert(popup.on_press == nil and popup.surface == "sidebar", "non-actionable notifications must not be click targets")
-assert(center.card(popup_item).on_press == nil, "expired history must not be a click target")
+assert(center.card(popup_item).on_press == nil, "non-actionable history must not be a click target")
+local expired = { id = 77, app = "Chat", title = "Expired", body = "", expired = true, default_action = true,
+  actions = { { key = "default", label = "Open" }, { key = "reply", label = "Reply" } } }
+local expired_card = center.card(expired)
+assert(expired_card.on_press == nil and expired_card.on_interaction_change == nil,
+  "expired notifications must not invoke stale actions")
+assert(not find(expired_card, "actions"), "expired notifications must not reserve an action slot")
 assert(find(popup, "app").children[1].key == "name", "no icon must leave no placeholder slot")
 local image_history = center.new()
 image_history.add { app = "Chrome", title = "First", body = "", image = { bytes = "site-one" } }
@@ -236,7 +247,7 @@ assert(find(view(), "history").item_count == 3, "collapse must remove message ro
 find(find(view(), "app-Messages"), "group").on_press()
 assert(find(view(), "history").item_count == 5)
 find(view(), "notification-4").children[1].on_interaction_change(true)
-find(view(), "action").on_press()
+find(view(), "action-1").on_press()
 assert(find(view(), "feedback").text:find("No app was opened.", 1, true))
 find(view(), "dismiss").on_press()
 assert(find(view(), "subtitle").text == "This session · 3 notifications")
@@ -304,7 +315,7 @@ history_state.add { app = "Chat", title = "Newest", body = "Body" }
 history = find(center.content(history_state, callbacks), "history")
 assert(history.item_key(1) == "app-Chat" and history.item_key(2) == "notification-101")
 for index = 3, history.item_count do assert(keys[history.item_key(index)], "prepending changed an existing row key") end
-history_state.dismiss(1)
+history_state.remove(1)
 history = find(center.content(history_state, callbacks), "history")
 for index = 1, history.item_count do assert(history.item_key(index) ~= "notification-1") end
 history_state.clear()

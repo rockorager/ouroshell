@@ -2,6 +2,7 @@ local ouro = require("ouro")
 local bar = require("bar")
 local launcher = require("launcher")
 local appearance = require("appearance")
+local catalog = require("catalog")
 local network = require("network")
 local selected = ouro.signal("2")
 local time = "Thu Sep 10  04:32 PM"
@@ -22,9 +23,11 @@ local function workspace_content()
       activate = function() selected:set(name) end,
     }
   end
-  return bar.content({ available = true, workspaces = workspaces }, time, nil, toggle, {
-    percentage = 67, icon = "battery-good-charging-symbolic", charging = true, low = false,
-  }, network.snapshot({ State = 70, Connectivity = 4, PrimaryConnectionType = "802-11-wireless" }, 78))
+  return bar.content {
+    workspaces = { available = true, workspaces = workspaces }, time = time, open_launcher = toggle,
+    power = { percentage = 67, icon = "battery-good-charging-symbolic", charging = true, low = false },
+    connectivity = network.snapshot({ State = 70, Connectivity = 4, PrimaryConnectionType = "802-11-wireless" }, 78),
+  }
 end
 
 return ouro.app {
@@ -32,14 +35,13 @@ return ouro.app {
   run = function()
     appearance.connect()
     launcher_state = launcher.new {
-      phase = "ready",
       dismiss = function() visible:set(false) end,
       prepare_launch = function(entry) return { argv = { entry.exec } } end,
       -- Preview is deliberately incapable of executing apps or session actions.
       call = function() return { result = { isError = true, structuredContent = {
         error = { message = "Preview only — no command was executed" },
       } } } end,
-      entries = {
+      catalog = catalog.fixed {
         { id = "org.gnome.Nautilus.desktop", name = "Files", generic_name = "File manager", icon = "system-file-manager", exec = "nautilus", visible = true },
         { id = "dev.rockorager.monstar.desktop", name = "Monstar", generic_name = "Terminal", icon = "utilities-terminal", exec = "monstar", visible = true },
         { id = "org.mozilla.firefox.desktop", name = "Firefox", generic_name = "Web browser", icon = "web-browser", exec = "firefox", visible = true },

@@ -1,6 +1,7 @@
 local ouro = require("ouro")
 local center = require("notification_center")
 local notification_image = require("notification_image")
+local support = require("dbus_support")
 local M = {}
 local interface = "org.freedesktop.Notifications"
 local path = "/org/freedesktop/Notifications"
@@ -10,27 +11,10 @@ local function display(value, limit)
   return value:sub(1, utf8.offset(value, 0, limit + 1) - 1) .. "…"
 end
 
-function M.new(applications)
-  local state = center.new()
-  state.applications = applications or function() return {} end
-  state.visible = ouro.signal(false)
-  state.popup = ouro.signal(nil)
-  state.message = ouro.signal("Connecting to the notification service…")
-  state.ready = ouro.signal(false)
-  state.remove = state.dismiss
-  function state.toggle()
-    state.visible:set(not state.visible())
-    state.popup:set(nil)
-  end
-  function state.close_center() state.visible:set(false) end
-  return state
-end
-
-local function resolve_app_icon(state, app, desktop_entry)
+local function resolve_app_icon(entries, app, desktop_entry)
   local function named(value)
     return type(value) == "string" and value ~= "" and not value:find("/", 1, true) and value or nil
   end
-  local entries = state.applications()
   if desktop_entry then
     local id = desktop_entry:gsub("%.desktop$", "") .. ".desktop"
     for _, entry in ipairs(entries) do
@@ -42,193 +26,217 @@ local function resolve_app_icon(state, app, desktop_entry)
   end
 end
 
--- Export scope owns expiration tasks, so closing a popup cannot cancel them.
-function M.export(bus, state)
-  local active, timers = {}, 0
+local function invalid(message)
+  return nil, { name = "org.freedesktop.DBus.Error.InvalidArgs", message = message }
+end
+
+local function limited(message)
+  return nil, { name = "org.freedesktop.DBus.Error.LimitsExceeded", message = message }
+end
+
+-- The daemon controller outlives D-Bus connections. History is the single
+-- source of truth: a notification is live while its stored item is current
+-- and unexpired. `overlay` is the shell's one exclusive overlay: nil, or
+-- { kind = "launcher" | "notifications" | "popup", id = popup_id }.
+--
+-- options.overlay: shared overlay signal (created when omitted)
+-- options.applications: returns desktop entries used to resolve app icons
+function M.new(options)
+  options = options or {}
+  local store = center.new()
+  local overlay = options.overlay or ouro.signal(nil)
+  local applications = options.applications or function() return {} end
+  local state = { store = store, overlay = overlay,
+    message = ouro.signal("Connecting to the notification service…") }
+  -- The connection signals are emitted on, with its pending expiry timers.
+  local link = nil
+
+  local function live(id)
+    local item = store.get(id)
+    if item and not item.expired then return item end
+  end
+  local function showing(kind)
+    local current = overlay()
+    return current ~= nil and current.kind == kind
+  end
+  function state.center_open() return showing("notifications") end
+  function state.popup()
+    local current = overlay()
+    if showing("popup") and not store.quiet() then return live(current.id) end
+  end
+  function state.toggle() overlay:set(not showing("notifications") and { kind = "notifications" } or nil) end
+  function state.close_center() if showing("notifications") then overlay:set(nil) end end
+
   local function emit(member, signature, args, destination)
-    local ok, failure = bus:emit { path = path, interface = interface, member = member,
+    if not link then return false end
+    local ok = link.bus:emit { path = path, interface = interface, member = member,
       signature = signature, args = args, destination = destination }
     if not ok then
       state.message:set("Notification connection lost; reconnecting…")
-      bus:close()
+      link.bus:close()
     end
-    return ok, failure
+    return ok
   end
-  local function finish(id, reason, retain, send)
-    local item = active[id]
-    active[id] = nil -- Invalidate before emitting NotificationClosed.
-    if state.popup() and state.popup().id == id then state.popup:set(nil) end
-    if retain and item and not item.transient then
-      local items = {}
-      for _, previous in ipairs(state.items()) do
-        if previous.id == id then
-          local archived = {}
-          for key, value in pairs(previous) do archived[key] = value end
-          archived.actions = {} -- A closed ID must never invoke stale actions.
-          archived.default_action = false
-          items[#items + 1] = archived
-        else items[#items + 1] = previous end
-      end
-      state.items:set(items)
-    else state.remove(id) end
-    if item and send then emit("NotificationClosed", "uu", { id, reason }) end
+
+  -- Ends a live notification, or drops one already expired. Retained
+  -- notifications stay in history as expired items.
+  local function finish(id, reason, retain)
+    local item = live(id)
+    if retain and item and not item.transient then store.expire(id) else store.remove(id) end
+    if item then emit("NotificationClosed", "uu", { id, reason }) end
   end
-  function state.dismiss(id) finish(id, 2, false, true) end
+
+  function state.dismiss(id) finish(id, 2, false) end
   function state.clear()
-    local items = state.items()
-    for _, item in ipairs(items) do state.dismiss(item.id) end
+    for _, item in ipairs(store.items()) do finish(item.id, 2, false) end
     state.message:set("Notification history cleared.")
   end
   function state.activate(item, key)
-    if active[item.id] ~= item then return end
+    if live(item.id) ~= item then return end
     for _, action in ipairs(item.actions) do
       if action.key == key then
         local token = ouro.activation_token()
         -- Token acquisition yields: replacement, expiry or disconnect may win.
-        if active[item.id] ~= item then return end
+        if live(item.id) ~= item then return end
         if token and not emit("ActivationToken", "us", { item.id, token }, item.sender) then return end
-        if emit("ActionInvoked", "us", { item.id, key }, item.sender) then
-          state.visible:set(false)
-          state.popup:set(nil)
-        else return end
-        if not item.resident then
-          finish(item.id, 2, false, true)
-        end
+        if not emit("ActionInvoked", "us", { item.id, key }, item.sender) then return end
+        if not showing("launcher") then overlay:set(nil) end
+        if not item.resident then finish(item.id, 2, false) end
         return
       end
     end
   end
+
+  function state.attach(bus) link = { bus = bus, timers = 0 } end
+  -- Without a connection no action can be delivered, so every live
+  -- notification expires into history.
   function state.disconnect()
-    local ids = {}
-    for id in pairs(active) do ids[#ids + 1] = id end
-    for _, id in ipairs(ids) do finish(id, 4, true, false) end
+    link = nil
+    for _, item in ipairs(store.items()) do
+      if not item.expired then finish(item.id, 4, true) end
+    end
   end
-  local function invalid(message)
-    return nil, { name = "org.freedesktop.DBus.Error.InvalidArgs", message = message }
+
+  function state.notify(request)
+    local connection = link
+    local app, replaces, app_icon, title, body, actions, hints, timeout = table.unpack(request.args)
+    if timeout < -1 or #actions % 2 ~= 0 then return invalid("Invalid timeout or action pairs") end
+    if #app > 4096 or #title > 8192 or #body > 32768 or #app_icon > 4096 or #actions > 8 then
+      return limited("Notification text or action count exceeds limits")
+    end
+    local values = support.variants(hints)
+    local function hint(key, signature)
+      local value = values[key]
+      if value and value.signature == signature then return value.value end
+    end
+    local urgency = hint("urgency", "y") or 1
+    local buttons, keys = {}, {}
+    for index = 1, #actions, 2 do
+      local key, label = actions[index], actions[index + 1]
+      if key == "" or keys[key] then return invalid("Action keys must be non-empty and unique") end
+      if #key > 256 or #label > 4096 then return limited("Action text exceeds limits") end
+      keys[key] = true
+      buttons[#buttons + 1] = { key = key, label = display(label == "" and "Open" or label, 64) }
+    end
+    local image = notification_image.load(hints, app_icon)
+      or resolve_app_icon(applications(), app, hint("desktop-entry", "s"))
+    -- Import yields. Check the connection, live IDs, history and timer capacity afterwards.
+    if not connection or link ~= connection then
+      return nil, { name = "org.freedesktop.DBus.Error.Failed", message = "Notification service disconnected" }
+    end
+    local delay = urgency == 2 and 0 or (timeout == -1 and 6000 or timeout)
+    if delay > 0 and connection.timers >= 64 then return limited("Too many pending expiration timers") end
+    local replacement = live(replaces) and replaces or nil
+    if not replacement and #store.items() >= 100 then
+      finish(store.items()[#store.items()].id, 4, false)
+    end
+    local item = store.add({ app = display(app == "" and "Application" or app, 64),
+      title = display(title == "" and "Notification" or title, 128), body = display(body, 1024),
+      image = image, actions = buttons, urgent = urgency == 2,
+      resident = hint("resident", "b") == true, transient = hint("transient", "b") == true,
+      sender = request.sender, default_action = keys.default == true,
+    }, replacement)
+    if item.id > 4294967295 then
+      store.remove(item.id)
+      return limited("Notification IDs exhausted")
+    end
+    -- Popups never cover the launcher or the open notification center.
+    if not store.quiet() and (overlay() == nil or showing("popup")) then
+      overlay:set({ kind = "popup", id = item.id })
+    end
+    state.message:set("Notifications are handled by Ouroshell.")
+    if delay > 0 then
+      connection.timers = connection.timers + 1
+      ouro.spawn(function()
+        ouro.sleep(delay)
+        connection.timers = connection.timers - 1
+        if live(item.id) == item then finish(item.id, 1, true) end
+      end)
+    end
+    return { item.id }
   end
-  local function limited(message)
-    return nil, { name = "org.freedesktop.DBus.Error.LimitsExceeded", message = message }
+
+  function state.close(id)
+    if not live(id) then return invalid("Unknown notification") end
+    finish(id, 3, false)
+    return {}
   end
+  return state
+end
+
+-- Binds `state` to `bus`. The export scope owns expiration tasks, so closing
+-- a popup cannot cancel them.
+function M.export(bus, state)
+  state.attach(bus)
   return bus:export { path = path, interface = interface,
     signals = { NotificationClosed = "uu", ActionInvoked = "us", ActivationToken = "us" }, methods = {
-      GetCapabilities = { input = "", output = "as", handler = function() return { { "body", "actions" } } end },
+      GetCapabilities = { input = "", output = "as",
+        handler = function() return { { "body", "actions", "icon-static", "persistence" } } end },
       GetServerInformation = { input = "", output = "ssss",
         handler = function() return { "Ouroshell", "Ouro", "0.1", "1.3" } end },
-      Notify = { input = "susssasa{sv}i", output = "u", handler = function(request)
-        local app, replaces, app_icon, title, body, actions, hints, timeout = table.unpack(request.args)
-        if timeout < -1 or #actions % 2 ~= 0 then return invalid("Invalid timeout or action pairs") end
-        if #app > 4096 or #title > 8192 or #body > 32768 or #app_icon > 4096 or #actions > 8 then
-          return limited("Notification text or action count exceeds limits")
-        end
-        local urgency, resident, transient = 1, false, false
-        local desktop_entry
-        for _, pair in ipairs(hints) do
-          local hint = pair[2]
-          if pair[1] == "urgency" and hint.signature == "y" then urgency = hint.value
-          elseif pair[1] == "resident" and hint.signature == "b" then resident = hint.value
-          elseif pair[1] == "transient" and hint.signature == "b" then transient = hint.value
-          elseif pair[1] == "desktop-entry" and hint.signature == "s" then desktop_entry = hint.value end
-        end
-        local buttons, keys = {}, {}
-        for index = 1, #actions, 2 do
-          local key, label = actions[index], actions[index + 1]
-          if key == "" or keys[key] then return invalid("Action keys must be non-empty and unique") end
-          if #key > 256 or #label > 4096 then return limited("Action text exceeds limits") end
-          keys[key] = true
-          buttons[#buttons + 1] = { key = key, label = display(label == "" and "Open" or label, 64) }
-        end
-        local image = notification_image.load(hints, app_icon) or resolve_app_icon(state, app, desktop_entry)
-        -- Import yields. Check live IDs, history and timer capacity afterwards.
-        local delay = urgency == 2 and 0 or (timeout == -1 and 6000 or timeout)
-        if delay > 0 and timers >= 64 then return limited("Too many pending expiration timers") end
-        local replacement = active[replaces] and replaces or nil
-        if not replacement and #state.items() >= 100 then
-          finish(state.items()[#state.items()].id, 4, false, true)
-        end
-        local item = state.add({ app = display(app == "" and "Application" or app, 64),
-          title = display(title == "" and "Notification" or title, 128), body = display(body, 1024),
-          image = image,
-          actions = buttons, urgent = urgency == 2, resident = resident, transient = transient,
-          sender = request.sender, default_action = keys.default == true,
-        }, replacement)
-        if item.id > 4294967295 then
-          state.remove(item.id)
-          return limited("Notification IDs exhausted")
-        end
-        active[item.id] = item
-        if not state.quiet() and not state.visible() then state.popup:set(item)
-        elseif state.popup() and state.popup().id == item.id then state.popup:set(nil) end
-        state.message:set("Notifications are handled by Ouroshell.")
-        if delay > 0 then
-          timers = timers + 1
-          ouro.spawn(function()
-            ouro.sleep(delay)
-            timers = timers - 1
-            if active[item.id] == item then finish(item.id, 1, true, true) end
-          end)
-        end
-        return { item.id }
-      end },
-      CloseNotification = { input = "u", output = "", handler = function(request)
-        local id = request.args[1]
-        if not active[id] then return invalid("Unknown notification") end
-        finish(id, 3, false, true)
-        return {}
-      end },
+      Notify = { input = "susssasa{sv}i", output = "u", handler = state.notify },
+      CloseNotification = { input = "u", output = "",
+        handler = function(request) return state.close(request.args[1]) end },
     },
   }
 end
 
 function M.connect(state)
-  ouro.spawn(function()
-    local retry = 1000
-    while true do
-      local ok, failure = pcall(function()
-        local connection, err = ouro.dbus.connect("session")
-        assert(connection, err and err.message)
-        local bus <close> = connection
-        local stream, stream_error = bus:subscribe { sender = "org.freedesktop.DBus", path = "/org/freedesktop/DBus",
-          interface = "org.freedesktop.DBus", member = "NameOwnerChanged" }
-        assert(stream, stream_error and stream_error.message)
-        local owners <close> = stream
-        local exported, export_error = M.export(bus, state)
-        assert(exported, export_error and export_error.message)
-        local service <close> = exported
-        local owned, name_error = bus:own_name(interface)
-        assert(owned, name_error and name_error.name)
-        local name <close> = owned
-        state.ready:set(true)
-        state.message:set("Notifications are handled by Ouroshell.")
-        retry = 1000
-        while true do
-          local event = owners:next()
-          if not event or (event.args[1] == interface and event.args[3] == "") then error("Notification bus disconnected") end
-        end
-      end)
-      state.ready:set(false)
-      if state.disconnect then state.disconnect() end
-      state.popup:set(nil)
-      state.message:set(not ok and tostring(failure):find("NameUnavailable", 1, true)
+  support.supervise { bus = "session", max_retry = 10000,
+    session = function(bus, healthy)
+      local owners <close> = support.need(bus:subscribe { sender = "org.freedesktop.DBus",
+        path = "/org/freedesktop/DBus", interface = "org.freedesktop.DBus", member = "NameOwnerChanged" })
+      local service <close> = support.need(M.export(bus, state))
+      local name <close> = support.need(bus:own_name(interface))
+      healthy()
+      state.message:set("Notifications are handled by Ouroshell.")
+      while true do
+        local event = support.need(owners:next())
+        if event.args[1] == interface and event.args[3] == "" then error("Notification name lost") end
+      end
+    end,
+    down = function(failure)
+      state.disconnect()
+      state.message:set(tostring(failure):find("NameUnavailable", 1, true)
         and "Another notification daemon is running." or "Notification service unavailable; reconnecting…")
-      ouro.sleep(retry)
-      retry = math.min(retry * 2, 10000)
-    end
-  end)
+    end,
+  }
 end
 
 function M.window(state)
-  if state.visible() then
+  if state.center_open() then
     return ouro.layer_surface { id = "notifications", namespace = "ouroshell-notifications", layer = "overlay",
       width = 420, height = 0, anchors = { "top", "bottom", "right" },
       margins = { top = 56, bottom = 16, right = 16 }, exclusive_zone = -1,
       keyboard_interactivity = "on_demand", background = ouro.tokens.palette.transparent,
-      content = function() return center.content(state, {
-        close = state.close_center, clear = state.clear, activate = state.activate, message = state.message,
+      content = function() return center.content(state.store, {
+        close = state.close_center, clear = state.clear, dismiss = state.dismiss,
+        activate = state.activate, message = state.message,
       }) end,
     }
   end
   local item = state.popup()
-  if item and not state.quiet() then
+  if item then
     -- Actions share the header; native menus never enlarge the banner.
     return ouro.layer_surface { id = "notification-popup", namespace = "ouroshell-notification-popup", layer = "overlay",
       width = 420, height = 160, anchors = { "top", "right" },

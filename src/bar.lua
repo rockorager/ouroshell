@@ -1,6 +1,7 @@
 local ouro = require("ouro")
 local appearance = require("appearance")
 local battery = require("battery")
+local config = require("config")
 local network = require("network")
 local f = ouro.tokens.foundation
 
@@ -24,7 +25,14 @@ local function belongs_to_output(workspace, output)
   return false
 end
 
-function M.content(state, time, output, toggle_launcher, power, connectivity, toggle_notifications, quiet)
+-- props.workspaces: workspace state from ouro.shell.workspaces
+-- props.time: formatted clock text
+-- props.output: output name to filter workspaces, or nil for fixtures
+-- props.open_launcher, props.open_notifications: optional button handlers
+-- props.power, props.connectivity: optional battery and network snapshots
+-- props.quiet: whether Do Not Disturb is on
+function M.content(props)
+  local state, output = props.workspaces, props.output
   local theme, palette = appearance.colors()
   local colors = {
     foreground = theme.sidebar_foreground, muted = theme.muted_foreground,
@@ -81,18 +89,18 @@ function M.content(state, time, output, toggle_launcher, power, connectivity, to
   end
 
   local status = {}
-  if connectivity then status[#status + 1] = network.content(connectivity) end
-  if power then status[#status + 1] = battery.content(power) end
-  if toggle_notifications then
+  if props.connectivity then status[#status + 1] = network.content(props.connectivity) end
+  if props.power then status[#status + 1] = battery.content(props.power) end
+  if props.open_notifications then
     status[#status + 1] = ouro.button { key = "notifications", label = "Open notifications",
       padding_x = f.spacing_2,
       background = colors.transparent, foreground = colors.foreground, hover = colors.hover,
-      on_press = toggle_notifications, children = {
-        ouro.xdg.icon { key = "bell", name = quiet and "notifications-disabled-symbolic" or "preferences-system-notifications-symbolic",
-          theme = "Adwaita", tint = colors.foreground, width = f.spacing_4, height = f.spacing_4 },
+      on_press = props.open_notifications, children = {
+        ouro.xdg.icon { key = "bell", name = props.quiet and "notifications-disabled-symbolic" or "preferences-system-notifications-symbolic",
+          theme = config.icon_theme, tint = colors.foreground, width = f.spacing_4, height = f.spacing_4 },
       } }
   end
-  status[#status + 1] = ouro.text { key = "clock", text = time, size = f.typography_3, max_lines = 1 }
+  status[#status + 1] = ouro.text { key = "clock", text = props.time, size = f.typography_3, max_lines = 1 }
 
   return ouro.box {
     key = "panel-background",
@@ -109,7 +117,7 @@ function M.content(state, time, output, toggle_launcher, power, connectivity, to
         children = {
           ouro.button { key = "launcher", label = "Open launcher",
             background = colors.transparent, foreground = colors.muted, hover = colors.hover,
-            on_press = toggle_launcher, children = {
+            on_press = props.open_launcher, children = {
               ouro.text { key = "mark", text = "●", foreground = colors.muted },
             } },
           ouro.scroll {

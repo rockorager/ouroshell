@@ -1,6 +1,6 @@
-package.path = "src/?.lua;" .. package.path
+package.path = "src/?.lua;tests/?.lua;" .. package.path
 -- A non-default value detects literals instead of references to the catalog.
-local ouro = { tokens = {
+local ouro = require("fake_ouro").install { tokens = {
   foundation = {
     typography_2 = 14, typography_3 = 23, typography_7 = 28, line_height_2 = 20,
     spacing_1 = 4, spacing_2 = 8, spacing_3 = 15, spacing_4 = 19,
@@ -12,11 +12,6 @@ local ouro = { tokens = {
     indigo = { step_6 = "token:indigo6" }, red = { step_11 = "token:red11" },
   } },
 } }
-for _, kind in ipairs({ "box", "row", "column", "scroll", "text", "button", "text_input", "icon", "app", "layer_surface" }) do
-  ouro[kind] = function(props) props.kind = kind; return props end
-end
-ouro.component = function(initialize) return function(props) return initialize(props)() end end
-package.loaded.ouro = ouro
 local scheme = "dark"
 package.loaded.appearance = {
   colors = function() return ouro.tokens[scheme], ouro.tokens.palette[scheme] end,
@@ -37,7 +32,7 @@ local state = { available = true, workspaces = {
   { id = "two-a", name = "2:code", can_activate = true, active = true },
   { id = "one", name = "1", can_activate = true },
 } }
-local tree = bar.content(state, "Thu Sep 10  04:32 PM")
+local tree = bar.content { workspaces = state, time = "Thu Sep 10  04:32 PM" }
 local items = workspace_items(tree)
 assert(#items == 5)
 for index, name in ipairs({ "1", "2:code", "2:mail", "10", "chat" }) do
@@ -80,7 +75,7 @@ assert(tree.children[1].children[2].axis == "horizontal")
 ouro.tokens.light = setmetatable({}, { __index = function(_, key) return "light:" .. key end })
 ouro.tokens.palette.light = { indigo = { step_6 = "light:indigo6" }, red = { step_11 = "light:red11" } }
 scheme = "light"
-local light_tree = bar.content(state, "time")
+local light_tree = bar.content { workspaces = state, time = "time" }
 local light_items = workspace_items(light_tree)
 assert(light_items[2].background == "light:accent_selected" and light_items[2].hover == "light:indigo6")
 assert(light_items[1].foreground == "light:muted_foreground" and light_items[3].foreground == "light:red11")
@@ -88,9 +83,9 @@ assert(light_tree.children[1].children[1].foreground == "light:muted_foreground"
 assert(light_items[2].key == items[2].key, "retheming must retain workspace identity")
 scheme = "dark"
 
-assert(workspace_items(bar.content({ available = false, workspaces = state.workspaces }, "time"))[1].text
+assert(workspace_items(bar.content { workspaces = { available = false, workspaces = state.workspaces }, time = "time" })[1].text
   == "Workspaces unavailable")
-assert(workspace_items(bar.content({ available = true, workspaces = { state.workspaces[2] } }, "time"))[1].text
+assert(workspace_items(bar.content { workspaces = { available = true, workspaces = { state.workspaces[2] } }, time = "time" })[1].text
   == "No workspaces")
 
 local repeated = { available = true, workspaces = {
@@ -98,7 +93,7 @@ local repeated = { available = true, workspaces = {
   { id = "3", name = "1", can_activate = true, activate = function() activated = "second" end },
   { name = "1", can_activate = false },
 } }
-local duplicates = workspace_items(bar.content(repeated, "time"))
+local duplicates = workspace_items(bar.content { workspaces = repeated, time = "time" })
 assert(#duplicates == 3)
 assert(duplicates[1].key ~= duplicates[2].key and duplicates[1].key ~= duplicates[3].key
   and duplicates[2].key ~= duplicates[3].key, "duplicate or missing IDs collided")
@@ -107,46 +102,34 @@ assert(activated == "first")
 duplicates[2].on_press()
 assert(activated == "second", "duplicate IDs must retain separate activation targets")
 repeated.workspaces[1].hidden = true
-assert(workspace_items(bar.content(repeated, "time"))[1].key == duplicates[2].key,
+assert(workspace_items(bar.content { workspaces = repeated, time = "time" })[1].key == duplicates[2].key,
   "hiding a workspace changed its sibling's key")
 
 repeated.workspaces[1].hidden = false
 repeated.workspaces[1].outputs = { "DP-1" }
 repeated.workspaces[2].outputs = { "eDP-1" }
 repeated.workspaces[3].outputs = { "DP-1", "eDP-1" }
-local dp = workspace_items(bar.content(repeated, "time", "DP-1"))
-local edp = workspace_items(bar.content(repeated, "time", "eDP-1"))
+local dp = workspace_items(bar.content { workspaces = repeated, time = "time", output = "DP-1" })
+local edp = workspace_items(bar.content { workspaces = repeated, time = "time", output = "eDP-1" })
 assert(#dp == 2 and #edp == 2, "each output must include only its members")
 dp[1].on_press()
 assert(activated == "first")
 edp[1].on_press()
 assert(activated == "second", "same-name workspaces must activate on their own output")
-assert(workspace_items(bar.content(repeated, "time", "absent"))[1].text == "No workspaces")
+assert(workspace_items(bar.content { workspaces = repeated, time = "time", output = "absent" })[1].text == "No workspaces")
 repeated.workspaces[2].outputs = { "DP-1" }
-assert(#workspace_items(bar.content(repeated, "time", "DP-1")) == 3)
-assert(#workspace_items(bar.content(repeated, "time", "eDP-1")) == 1,
+assert(#workspace_items(bar.content { workspaces = repeated, time = "time", output = "DP-1" }) == 3)
+assert(#workspace_items(bar.content { workspaces = repeated, time = "time", output = "eDP-1" }) == 1,
   "moving groups must remove the workspace from its old output")
 
-local now, spawned, delay = 119, nil, nil
-ouro.time = function() return now end
-ouro.date = function(format)
-  assert(format == "%a %b %d  %I:%M %p")
-  return "minute " .. math.floor(now / 60)
-end
-ouro.signal = function(value)
-  return setmetatable({ set = function(_, next_value) value = next_value end }, {
-    __call = function() return value end,
-  })
-end
-ouro.json = { null = {} }
-ouro.xdg = { runtime_dir = "/run/user/42", icon = ouro.icon, applications = {
+ouro.xdg = { runtime_dir = "/run/user/42", icon = ouro.xdg.icon, applications = {
   list = function() return {} end,
   prepare_launch = function() return {} end,
 } }
 local opened = false
 for _, quiet in ipairs({ false, true }) do
-  local controls = bar.content(state, "test clock", nil, nil, nil, nil,
-    function() opened = true end, quiet).children[1].children[3].children
+  local controls = bar.content { workspaces = state, time = "test clock",
+    open_notifications = function() opened = true end, quiet = quiet }.children[1].children[3].children
   assert(#controls == 2 and controls[1].key == "notifications" and controls[2].key == "clock",
     "bell must be immediately left of the rightmost clock")
   assert(controls[2].text == "test clock")
@@ -162,17 +145,13 @@ for _, quiet in ipairs({ false, true }) do
 end
 assert(opened, "bell must invoke the notification toggle")
 ouro.mcp = { call = function() return { result = {} } end }
-ouro.spawn = function(fn)
-  local task = coroutine.create(fn)
-  assert(coroutine.resume(task))
-  if coroutine.status(task) == "suspended" then assert(spawned == nil); spawned = task end
-end
-ouro.sleep = function(ms) delay = ms; coroutine.yield() end
+ouro.spawn = function(fn) assert(coroutine.resume(coroutine.create(fn))) end
 ouro.shell = { workspaces = { connect = function() return function() return state end end } }
-local power, connectivity
+local power, connectivity, time = nil, nil, "minute 1"
 require("battery").connect = function() return function() return power end end
 require("network").connect = function() return function() return connectivity end end
 require("notifications").connect = function() end
+require("clock").connect = function() return function() return time end end
 local app = dofile("src/application.lua")
 assert(app.theme == nil, "shell must inherit the host theme")
 local running = app.run()
@@ -183,11 +162,8 @@ assert(panel.outputs == "all" and panel.output == nil)
 assert(workspace_items(panel.content("DP-1"))[1].text == "No workspaces",
   "application did not pass the native output name to the bar")
 assert(panel.content().children[1].children[3].children[2].text == "minute 1")
-assert(delay == 1000, "clock did not align with the next minute")
-now = 120
-assert(coroutine.resume(spawned))
-assert(delay == 60000)
-assert(panel.content().children[1].children[3].children[2].text == "minute 2")
+time = "minute 2"
+assert(panel.content().children[1].children[3].children[2].text == "minute 2", "panel must follow the clock")
 power = { percentage = 12, icon = "battery-caution-symbolic", low = true }
 local status = panel.content().children[1].children[3]
 assert(#status.children == 3 and status.children[1].key == "battery" and status.children[3].key == "clock")
@@ -214,4 +190,4 @@ assert(#running.windows() == 2 and running.windows()[2].id == "notifications")
 app.actions["launcher.toggle"].handler()
 app.actions["launcher.toggle"].handler()
 assert(#running.windows() == 1)
-print("PASS: workspace ordering, visibility, activation, states, and minute-aligned clock")
+print("PASS: workspace ordering, visibility, activation, states, status indicators, and overlays")

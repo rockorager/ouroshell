@@ -1,5 +1,6 @@
 local ouro = require("ouro")
 local appearance = require("appearance")
+local config = require("config")
 local f = ouro.tokens.foundation
 
 local M = {}
@@ -9,6 +10,16 @@ local visible_rows = 7
 local row_height, palette_height = 56, 620
 local search_height, tab_height = f.spacing_8, f.spacing_6
 local frame_padding = f.spacing_4
+local shadow_blur = 12
+
+-- The first visible result row: the previous window moved just enough to
+-- contain the selection, clamped to the result count. Rendering and keyboard
+-- paging both use this, so they cannot disagree about what is visible.
+local function window_start(first, selected, count, capacity)
+  if selected < first then first = selected
+  elseif selected >= first + capacity then first = selected - capacity + 1 end
+  return math.max(1, math.min(first, count - capacity + 1))
+end
 
 function M.background()
   -- The opaque card carries contrast; keep the blurred backdrop light-touch
@@ -75,7 +86,7 @@ function M.search(entries, query)
 end
 
 function M.launch_argv(entry, prepare_launch)
-  local options = entry.terminal and { terminal_argv = { "monstar", "-e" } } or nil
+  local options = entry.terminal and { terminal_argv = config.terminal_argv } or nil
   local launch = options and prepare_launch(entry, options) or prepare_launch(entry)
   local argv = {}
   if launch.cwd and launch.cwd ~= ouro.json.null then
@@ -85,14 +96,16 @@ function M.launch_argv(entry, prepare_launch)
   return argv
 end
 
+-- services.catalog: application catalog from catalog.lua
+-- services.dismiss: closes the launcher
+-- services.prepare_launch, services.call: optional launch overrides for fixtures
 function M.new(services)
-  services = services or {}
+  local catalog = services.catalog
   local state = {
-    entries = ouro.signal(services.entries or {}),
+    catalog = catalog,
     query = ouro.signal(""), selected = ouro.signal(1), first = ouro.signal(1),
     scope = ouro.signal("all"), page = ouro.signal(nil), confirming = ouro.signal(nil),
     input_generation = ouro.signal(0),
-    phase = ouro.signal(services.phase or "loading"),
     message = ouro.signal(nil), launching = ouro.signal(false),
   }
 
@@ -100,7 +113,7 @@ function M.new(services)
     local query = normalized(state.query())
     local results = {}
     if not state.page() and state.scope() ~= "system" then
-      results = M.search(state.entries(), query)
+      results = M.search(catalog.entries(), query)
       -- The home view is a starting point; Apps browses the complete catalog.
       if state.scope() == "all" and query == "" then
         while #results > 3 do table.remove(results) end
@@ -155,11 +168,8 @@ function M.new(services)
     local count = state.confirming() and 2 or #state.results()
     if count == 0 then state.selected:set(1); state.first:set(1); return end
     local selected = ((state.selected() - 1 + delta) % count) + 1
-    local first = state.first()
-    if selected < first then first = selected
-    elseif selected >= first + capacity then first = selected - capacity + 1 end
     state.selected:set(selected)
-    state.first:set(math.min(first, math.max(1, count - capacity + 1)))
+    state.first:set(window_start(state.first(), selected, count, capacity))
   end
   local function execute(entry)
     if state.launching() then return end
@@ -217,23 +227,11 @@ function M.new(services)
       else state.launch() end
     elseif command == "cancel" then state.back() end
   end
-  function state.load()
-    ouro.spawn(function()
-      local ok, entries = pcall((services.list or ouro.xdg.applications.list))
-      if ok then
-        state.entries:set(entries)
-        state.phase:set("ready")
-      else
-        state.phase:set("error")
-        state.message:set("Applications could not be loaded: " .. tostring(entries))
-      end
-    end)
-  end
   return state
 end
 
 local function icon(key, name, size, tint)
-  return ouro.xdg.icon { key = key, name = name, theme = "Adwaita", width = size, height = size, tint = tint, alt = "" }
+  return ouro.xdg.icon { key = key, name = name, theme = config.icon_theme, width = size, height = size, tint = tint, alt = "" }
 end
 
 local function rule(key, colors)
@@ -295,15 +293,19 @@ function M.content(state, height, width)
   local theme, palette = appearance.colors()
   local frame_width = math.min(560 + 2 * frame_padding, width - 2 * f.spacing_5)
   local frame_height = math.min(palette_height + 2 * frame_padding, height - 2 * f.spacing_5)
-  -- Ourokit has no box-shadow primitive. Rasterize a decorative SVG behind
-  -- the card, using the actual viewport so the shadow also follows resizing.
+  -- Ourokit has no box-shadow primitive. Rasterize a decorative SVG centered
+  -- behind the card: the card plus its blur reach, clipped to the viewport.
+  -- The rectangle sits lower in the image, dropping the shadow by `offset`.
+  local reach, offset = 2 * shadow_blur, f.spacing_2
+  local shadow_width = math.min(frame_width + 2 * reach, width)
+  local shadow_height = math.min(frame_height + 2 * (reach + offset), height)
   local shadow = string.format([[<svg xmlns="http://www.w3.org/2000/svg" width="%g" height="%g">
     <defs><filter id="shadow" x="-50%%" y="-50%%" width="200%%" height="200%%">
-      <feGaussianBlur stdDeviation="12"/>
+      <feGaussianBlur stdDeviation="%g"/>
     </filter></defs>
     <rect x="%g" y="%g" width="%g" height="%g" rx="%g" fill="black" fill-opacity="0.4" filter="url(#shadow)"/>
-  </svg>]], width, height, (width - frame_width) / 2, (height - frame_height) / 2 + f.spacing_2,
-    frame_width, frame_height, f.radius_6)
+  </svg>]], shadow_width, shadow_height, shadow_blur, (shadow_width - frame_width) / 2,
+    (shadow_height - frame_height) / 2 + offset, frame_width, frame_height, f.radius_6)
   local colors = {
     selected = theme.accent_selected, selected_border = theme.ring,
     foreground = theme.foreground, muted = theme.muted_foreground,
@@ -324,9 +326,7 @@ function M.content(state, height, width)
   local chrome_height = search_height + scopes_height + 3 * f.spacing_4 + 2 * f.line_height_2
   local available = frame_height - 2 * frame_padding - chrome_height - heading_space
   local capacity = math.max(1, math.min(visible_rows, math.floor((available + f.spacing_1) / (row_height + f.spacing_1))))
-  local first = math.max(1, math.min(state.first(), #results - capacity + 1))
-  if state.selected() < first then first = state.selected()
-  elseif state.selected() >= first + capacity then first = state.selected() - capacity + 1 end
+  local first = window_start(state.first(), state.selected(), #results, capacity)
   local rows, group = {}, nil
   for index = first, math.min(#results, first + capacity - 1) do
     local entry = results[index]
@@ -359,11 +359,17 @@ function M.content(state, height, width)
   local status = state.message()
   if not status and state.launching() then status = "Sending request…" end
   if not status and state.scope() ~= "system" and not state.page() then
-    if state.phase() == "loading" then status = "Loading applications…"
-    elseif state.phase() == "error" then status = "Applications unavailable. System actions are still available." end
+    local phase = state.catalog.phase()
+    if phase == "loading" then status = "Loading applications…"
+    elseif phase == "error" then
+      status = "Applications could not be loaded (" .. tostring(state.catalog.error())
+        .. "). System actions are still available."
+    end
   end
   return ouro.stack { key = "launcher", children = {
-    ouro.image { key = "shadow", bytes = shadow, width = "fill", height = "fill", fit = "fill", alt = "" },
+    ouro.box { key = "shadow-position", width = "fill", height = "fill", alignment = "center", children = {
+      ouro.image { key = "shadow", bytes = shadow, width = shadow_width, height = shadow_height, fit = "fill", alt = "" },
+    } },
     ouro.box { key = "position", width = "fill", height = "fill", padding = f.spacing_5, alignment = "center", children = {
       ouro.box { key = "palette", width = frame_width, height = frame_height,
         padding = frame_padding - f.border_width_default, radius = f.radius_6,

@@ -1,15 +1,10 @@
-package.path = "src/?.lua;" .. package.path
+package.path = "src/?.lua;tests/?.lua;" .. package.path
 local tasks, delay = {}, nil
-local ouro = { tokens = { foundation = { spacing_1 = 4, spacing_4 = 16, typography_3 = 16 } }, xdg = {}, dbus = {} }
-ouro.signal = function(value)
-  return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
-end
-ouro.spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end
-ouro.sleep = function(ms) delay = ms; coroutine.yield() end
-ouro.row = function(props) return props end
-ouro.text = function(props) return props end
-ouro.xdg.icon = function(props) return props end
-package.loaded.ouro = ouro
+local ouro = require("fake_ouro").install {
+  tokens = { foundation = { spacing_1 = 4, spacing_4 = 16, typography_3 = 16 } },
+  spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end,
+  sleep = function(ms) delay = ms; coroutine.yield() end,
+}
 local scheme = "light"
 package.loaded.appearance = { colors = function()
   return { sidebar_foreground = scheme .. ":foreground", muted_foreground = scheme .. ":muted" },
@@ -74,13 +69,13 @@ ouro.dbus.connect = function(which)
     function stream:close() self.closed = true end
     function stream:next()
       local message = coroutine.yield()
-      if bus.closed then return nil, { message = "closed" } end
+      if bus.closed or message == "owner-changed" then return nil, { name = "ServiceDisappeared", message = "gone" } end
       return message
     end
-    if match.member == "PropertiesChanged" then
-      assert(match.sender == service and match.path == nil, "AP/device signals must be included")
-      subscribed = true
-    else assert(match.member == "NameOwnerChanged" and match.sender == "org.freedesktop.DBus") end
+    assert(match.member == "PropertiesChanged" and match.sender == service and match.path == nil,
+      "AP/device signals must be included")
+    assert(match.close_on_owner_change, "a NetworkManager restart must end the session")
+    subscribed = true
     self.streams[#self.streams + 1] = stream
     return setmetatable(stream, { __close = stream.close })
   end
@@ -106,8 +101,7 @@ ouro.dbus.connect = function(which)
 end
 local state = network.connect()
 assert(coroutine.resume(tasks[1]))
-assert(reads == 4 and state().icon == "network-wireless-signal-excellent-symbolic")
-assert(coroutine.resume(tasks[2]))
+assert(#tasks == 1 and reads == 4 and state().icon == "network-wireless-signal-excellent-symbolic")
 assert(coroutine.resume(tasks[1], { path = "/unrelated-ap" }))
 assert(reads == 4, "unrelated AP updates caused a refresh")
 ap = "/ap2"
@@ -126,11 +120,9 @@ assert(reads == 17 and state().label == "Ethernet")
 assert(coroutine.resume(tasks[1], { path = "/ap2" }))
 assert(reads == 17, "old Wi-Fi events should not affect Ethernet")
 local old_bus = current_bus
-assert(coroutine.resume(tasks[2], { args = { service, ":1.2", "" } }))
-assert(old_bus.closed)
-assert(coroutine.resume(tasks[1]))
+assert(coroutine.resume(tasks[1], "owner-changed"))
+assert(old_bus.closed and old_bus.streams[1].closed)
 assert(state() == nil and delay == 1000)
-assert(old_bus.streams[1].closed and old_bus.streams[2].closed)
 offline = true
 assert(coroutine.resume(tasks[1]))
 assert(delay == 2000)

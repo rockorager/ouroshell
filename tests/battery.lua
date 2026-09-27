@@ -1,15 +1,10 @@
-package.path = "src/?.lua;" .. package.path
+package.path = "src/?.lua;tests/?.lua;" .. package.path
 local tasks, delay = {}, nil
-local ouro = { tokens = { foundation = { spacing_1 = 4, spacing_4 = 16, typography_3 = 16 } }, xdg = {}, dbus = {} }
-ouro.signal = function(value)
-  return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
-end
-ouro.spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end
-ouro.sleep = function(ms) delay = ms; coroutine.yield() end
-ouro.row = function(props) return props end
-ouro.text = function(props) return props end
-ouro.xdg.icon = function(props) return props end
-package.loaded.ouro = ouro
+local ouro = require("fake_ouro").install {
+  tokens = { foundation = { spacing_1 = 4, spacing_4 = 16, typography_3 = 16 } },
+  spawn = function(fn) tasks[#tasks + 1] = coroutine.create(fn) end,
+  sleep = function(ms) delay = ms; coroutine.yield() end,
+}
 local foreground, red = "light:foreground", "light:red"
 package.loaded.appearance = { colors = function()
   return { sidebar_foreground = foreground }, { red = { step_11 = red } }
@@ -59,18 +54,17 @@ ouro.dbus.connect = function(which)
   current_bus = bus
   function bus:close() self.closed = true end
   function bus:subscribe(match)
-    assert(match.sender == "org.freedesktop.UPower" or match.sender == "org.freedesktop.DBus")
+    assert(match.sender == "org.freedesktop.UPower" and match.member == "PropertiesChanged")
+    assert(match.path == "/display" and match.interface == "org.freedesktop.DBus.Properties")
+    assert(match.close_on_owner_change, "a UPower restart must end the session")
+    subscribed = true
     local stream = { closed = false }
     function stream:close() self.closed = true end
     function stream:next()
       local message = coroutine.yield()
-      if bus.closed then return nil, { message = "closed" } end
+      if bus.closed or message == "owner-changed" then return nil, { name = "ServiceDisappeared", message = "gone" } end
       return message
     end
-    if match.member == "PropertiesChanged" then
-      assert(match.path == "/display" and match.interface == "org.freedesktop.DBus.Properties")
-      subscribed = true
-    else assert(match.member == "NameOwnerChanged") end
     self.streams[#self.streams + 1] = stream
     return setmetatable(stream, { __close = stream.close })
   end
@@ -89,16 +83,16 @@ ouro.dbus.connect = function(which)
   return setmetatable(bus, { __close = bus.close })
 end
 local state = battery.connect()
-assert(state() == nil)
+assert(state() == nil and #tasks == 1)
 assert(coroutine.resume(tasks[1]))
 assert(state().percentage == 87 and reads == 1)
-assert(coroutine.resume(tasks[2])) -- Owner watcher waits independently.
-local changed = { args = { "org.freedesktop.UPower.Device", {}, { "Percentage", "State" } } }
+local changed = { signature = "sa{sv}as", args = { "org.freedesktop.UPower.Device", {}, { "Percentage", "State" } } }
 current = properties(32, 1)
 assert(coroutine.resume(tasks[1], changed))
 assert(state().percentage == 32 and state().charging and reads == 2, "invalidated properties must be reread")
-assert(coroutine.resume(tasks[1], { args = { "unrelated.Interface" } }))
-assert(reads == 2)
+assert(coroutine.resume(tasks[1], { signature = "sa{sv}as", args = { "unrelated.Interface", {}, {} } }))
+assert(coroutine.resume(tasks[1], { signature = "s", args = { "org.freedesktop.UPower.Device" } }))
+assert(reads == 2, "unrelated or malformed signals must not reread")
 current = properties(32, 1, false)
 assert(coroutine.resume(tasks[1], changed))
 assert(state() == nil, "removed battery remained visible")
@@ -106,16 +100,17 @@ current = properties(11, 2, true, 4)
 assert(coroutine.resume(tasks[1], changed))
 assert(state().low)
 local old_bus = current_bus
-assert(coroutine.resume(tasks[2], { args = { "org.freedesktop.UPower", ":1.2", "" } }))
-assert(old_bus.closed)
-assert(coroutine.resume(tasks[1]))
+assert(coroutine.resume(tasks[1], "owner-changed"))
+assert(old_bus.closed and old_bus.streams[1].closed)
 assert(state() == nil and delay == 1000, "service loss must clear stale charge")
-assert(old_bus.streams[1].closed and old_bus.streams[2].closed)
 offline = true
 assert(coroutine.resume(tasks[1]))
 assert(delay == 2000 and state() == nil)
 offline = false
 current = properties(99, 4)
+subscribed = false
 assert(coroutine.resume(tasks[1]))
 assert(state().percentage == 99 and current_bus ~= old_bus, "reconnect did not read the new owner")
+assert(coroutine.resume(tasks[1], "owner-changed"))
+assert(delay == 1000, "a healthy session must reset the backoff")
 print("PASS: battery variants, rounding, charging/low/absent states, signals, invalidation, and reconnection")

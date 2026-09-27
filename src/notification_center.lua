@@ -1,24 +1,49 @@
 local ouro = require("ouro")
 local appearance = require("appearance")
+local config = require("config")
 local f = ouro.tokens.foundation
 local M = {}
 
+local function copy(item)
+  local result = {}
+  for key, value in pairs(item) do result[key] = value end
+  return result
+end
+
+-- Notification history, newest first. Items are immutable: every change
+-- stores a new table, so identity tells a caller whether its item is current.
+-- An expired item stays readable but can no longer be activated.
 function M.new()
   local state = { items = ouro.signal({}), quiet = ouro.signal(false), collapsed = ouro.signal({}) }
   local next_id = 0
+  function state.get(id)
+    for _, item in ipairs(state.items()) do
+      if item.id == id then return item end
+    end
+  end
   function state.add(item, replaces)
     if not replaces then next_id = next_id + 1 end
-    local copy = {}
-    for key, value in pairs(item) do copy[key] = value end
-    copy.id = replaces or next_id
-    local items = { copy }
+    local added = copy(item)
+    added.id = replaces or next_id
+    local items = { added }
     for _, previous in ipairs(state.items()) do
-      if previous.id ~= copy.id then items[#items + 1] = previous end
+      if previous.id ~= added.id then items[#items + 1] = previous end
     end
     state.items:set(items)
-    return copy
+    return added
   end
-  function state.dismiss(id)
+  function state.expire(id)
+    local items = {}
+    for index, item in ipairs(state.items()) do
+      items[index] = item
+      if item.id == id then
+        items[index] = copy(item)
+        items[index].expired = true
+      end
+    end
+    state.items:set(items)
+  end
+  function state.remove(id)
     local items = {}
     for _, item in ipairs(state.items()) do
       if item.id ~= id then items[#items + 1] = item end
@@ -49,7 +74,7 @@ function M.new()
 end
 
 local function icon(key, name, color, size)
-  return ouro.xdg.icon { key = key, name = name, theme = "Adwaita", tint = color,
+  return ouro.xdg.icon { key = key, name = name, theme = config.icon_theme, tint = color,
     width = size or f.spacing_4, height = size or f.spacing_4 }
 end
 
@@ -68,7 +93,7 @@ local function notification_image(image)
     props.bytes = image.bytes
     return ouro.image(props)
   end
-  props.name, props.theme = image.name, "Adwaita"
+  props.name, props.theme = image.name, config.icon_theme
   return ouro.xdg.icon(props)
 end
 
@@ -78,7 +103,7 @@ local function notification_surface(item, key, surface, radius, content, activat
     border_width = f.border_width_default, border = item.urgent and palette.amber.step_7 or theme.border,
     children = { ouro.box { key = "inset", width = "fill", padding = f.spacing_3, children = { content } } },
   }
-  if item.default_action then
+  if item.default_action and not item.expired then
     props.label, props.height, props.padding_x = "Open " .. item.app, "auto", 0
     props.background = theme[surface]
     props.hover, props.pressed, props.focus = props.background, props.background, theme.ring
@@ -107,6 +132,8 @@ local function card(item, dismiss, activate, actions, interaction)
     ouro.column { key = "content", gap = f.spacing_2, cross_alignment = "stretch", children = children }, activate, interaction)
 end
 
+-- `state` is a history store from M.new; `callbacks.dismiss(id)` and
+-- `callbacks.activate(item, key)` decide what dismissal and actions mean.
 function M.content(state, callbacks)
   local theme = appearance.colors()
   local rows = {}
@@ -139,7 +166,7 @@ function M.content(state, callbacks)
         }
       elseif row.item then
         local item = row.item
-        content = M.card(item, function() state.dismiss(item.id) end,
+        content = M.card(item, function() callbacks.dismiss(item.id) end,
           function(key) callbacks.activate(item, key) end)
       else
         return ouro.box { key = "empty", width = "fill", padding = f.spacing_6, children = {
@@ -240,9 +267,9 @@ local notification = ouro.component(function(props)
       open = nil
     end
     local actions = {}
-    for index, action in ipairs(item.actions or (item.action and { { key = "action", label = item.action } } or {})) do
+    for index, action in ipairs(not item.expired and item.actions or {}) do
       if action.key ~= "default" then
-        actions[#actions + 1] = { key = item.action and "action" or "action-" .. index, action = action }
+        actions[#actions + 1] = { key = "action-" .. index, action = action }
       end
     end
     local controls

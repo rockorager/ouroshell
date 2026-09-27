@@ -1,4 +1,5 @@
 local ouro = require("ouro")
+local support = require("dbus_support")
 local scheme = ouro.signal("light")
 local M = {}
 local service = "org.freedesktop.portal.Desktop"
@@ -15,20 +16,20 @@ local function update(value)
 end
 
 -- Explicit color tokens must follow the same Settings portal as Ourokit.
+-- Portal owner changes are followed within one connection, without polling;
+-- losing the bus itself falls back to light and reconnects.
 function M.connect()
-  ouro.spawn(function()
-    local bus <close> = ouro.dbus.connect("session")
-    if not bus then return end
-    local owners <close> = bus:subscribe {
+  local revision = 0
+  support.supervise { bus = "session", session = function(bus, healthy)
+    local owners <close> = support.need(bus:subscribe {
       sender = "org.freedesktop.DBus", path = "/org/freedesktop/DBus",
       interface = "org.freedesktop.DBus", member = "NameOwnerChanged",
-    }
-    if not owners then return end
-    local changes <close> = bus:subscribe {
+    })
+    local changes <close> = support.need(bus:subscribe {
       sender = service, path = path, interface = interface, member = "SettingChanged",
-    }
-    if not changes then return end
-    local revision, owner = 0, nil
+    })
+    healthy()
+    local owner = nil
     local function refresh()
       revision = revision + 1
       local reading = revision
@@ -64,8 +65,7 @@ function M.connect()
     end)
     ouro.spawn(refresh) -- Both matches are registered before the initial read.
     while true do
-      local message = owners:next()
-      if not message then revision = revision + 1; update(nil); return end
+      local message = support.need(owners:next())
       if message.signature == "sss" and message.args[1] == service then
         owner = message.args[3]
         revision = revision + 1
@@ -73,7 +73,10 @@ function M.connect()
         if owner ~= "" then ouro.spawn(refresh) end
       end
     end
-  end)
+  end, down = function()
+    revision = revision + 1 -- Retire reads from the lost connection.
+    update(nil)
+  end }
 end
 
 return M

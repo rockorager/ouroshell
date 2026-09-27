@@ -1,8 +1,8 @@
-package.path = "src/?.lua;" .. package.path
+package.path = "src/?.lua;tests/?.lua;" .. package.path
 
 local tasks = {}
-local ouro = { json = { null = {} }, xdg = { runtime_dir = "/run/user/42", applications = {} }, mcp = {} }
 -- Distinct sentinel values catch copied hex colors instead of catalog usage.
+local ouro = require("fake_ouro").install { spawn = function(fn) tasks[#tasks + 1] = fn end }
 ouro.tokens = {
   foundation = {
     typography_2 = 14, typography_3 = 23, typography_7 = 28, line_height_2 = 20,
@@ -16,16 +16,6 @@ ouro.tokens = {
     slate = { step_3 = "token:slate3", step_6 = "token:slate6" },
   } },
 }
-for _, kind in ipairs({ "box", "row", "column", "scroll", "stack", "image", "text", "button", "text_input", "icon", "layer_surface", "app" }) do
-  ouro[kind] = function(props) props.kind = kind; return props end
-end
-ouro.component = function(initialize) return function(props) return initialize(props)() end end
-ouro.xdg.icon = ouro.icon
-ouro.signal = function(value)
-  return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
-end
-ouro.spawn = function(fn) tasks[#tasks + 1] = fn end
-package.loaded.ouro = ouro
 local scheme = "dark"
 package.loaded.appearance = {
   colors = function() return ouro.tokens[scheme], ouro.tokens.palette[scheme] end,
@@ -33,6 +23,7 @@ package.loaded.appearance = {
 }
 
 local launcher = require("launcher")
+local catalog = require("catalog")
 local entries = {
   { id = "code.desktop", name = "Visual Code", generic_name = "Editor", keywords = { "development" }, exec = "code", visible = true },
   { id = "calc.desktop", name = "Calculator", exec = "calc", visible = true },
@@ -56,7 +47,7 @@ assert(table.concat(terminal, "|") == "env|--chdir=/tmp/a b|--|monstar|-e|htop")
 
 local dismissed, call
 local state = launcher.new {
-  entries = entries, phase = "ready", dismiss = function() dismissed = true end,
+  catalog = catalog.fixed(entries), dismiss = function() dismissed = true end,
   prepare_launch = function(entry) return { argv = { entry.exec }, cwd = ouro.json.null } end,
   call = function(address, tool, arguments)
     call = { address, tool, arguments }; return { result = { isError = false } }
@@ -109,8 +100,14 @@ assert(find(selected, "name").size == f.typography_3 and find(selected, "descrip
 assert(find(tree, "search-shell").radius == f.radius_2 and find(tree, "search-shell").height == f.spacing_8)
 assert(find(tree, "content").gap == f.spacing_4 and find(tree, "position").padding == f.spacing_5)
 assert(find(tree, "status").foreground == ouro.tokens.dark.muted_foreground)
-assert(tree.kind == "stack" and #tree.children == 2 and tree.children[1].key == "shadow" and tree.children[2].key == "position")
+assert(tree.kind == "stack" and #tree.children == 2 and tree.children[1].key == "shadow-position"
+  and tree.children[2].key == "position")
+assert(tree.children[1].alignment == "center" and tree.children[1].width == "fill")
 assert(find(tree, "shadow").alt == "" and find(tree, "shadow").fit == "fill")
+assert(find(tree, "shadow").width == 640 and find(tree, "shadow").height == 716,
+  "shadow must cover the card and its blur, not the whole viewport")
+assert(find(tree, "shadow").bytes:find('width="640" height="716"', 1, true)
+  and find(tree, "shadow").bytes:find('x="24" y="40" width="592" height="652"', 1, true))
 assert(find(tree, "vignette") == nil)
 assert(find(tree, "position").width == "fill" and find(tree, "position").height == "fill")
 local frame = find(tree, "palette")
@@ -135,7 +132,7 @@ assert(find(tree, "application-code.desktop").background ~= "#00000000")
 assert(#launcher.search({ {id="x", name="Other", generic_name=ouro.json.null, exec="x"} }, "absent") == 0)
 local many = {}
 for index = 1, 10 do many[index] = {id=tostring(index), name=string.format("App %02d", index), exec="app"} end
-state.entries:set(many); state.change("")
+state.catalog.entries:set(many); state.change("")
 for _ = 1, 8 do state.command("next") end
 assert(state.selected() == 9 and state.first() == 3)
 local rows = find(launcher.content(state), "results").children
@@ -216,10 +213,12 @@ state.open(); state.change("restart"); state.command("submit"); state.open()
 assert(not state.confirming() and state.query() == "" and state.scope() == "all")
 
 -- An app catalog failure cannot remove the shell's system actions.
-local failed = launcher.new { dismiss = function() end, list = function() error("offline") end,
+local failed_catalog = catalog.new(function() error("offline") end)
+local failed = launcher.new { catalog = failed_catalog, dismiss = function() end,
   call = function() return { result = { isError = true, structuredContent = { error = { message = "denied" } } } } end }
-failed.load(); tasks[#tasks]()
-assert(failed.phase() == "error" and #failed.results() == 2)
+failed_catalog.load(); tasks[#tasks]()
+assert(failed_catalog.phase() == "error" and #failed.results() == 2)
+assert(find(launcher.content(failed), "status").text:find("offline", 1, true), "catalog failure must be visible")
 failed.change("lock"); failed.command("submit"); tasks[#tasks]()
 assert(not failed.launching() and failed.message():find("denied", 1, true))
 
