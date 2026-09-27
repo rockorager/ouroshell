@@ -42,7 +42,7 @@ for index, name in ipairs({ "1", "2:code", "2:mail", "10", "chat" }) do
   end
 end
 assert(state.workspaces[1].name == "10", "sorting mutated the protocol snapshot")
-assert(items[4].key == "workspace-id:1:ten")
+assert(items[4].key == "workspace-id:ten")
 items[4].on_press()
 assert(activated == "ten", "click activated the wrong workspace")
 assert(items[2].on_press == nil, "active workspace should not reactivate")
@@ -88,19 +88,26 @@ assert(workspace_items(bar.content { workspaces = { available = false, workspace
 assert(workspace_items(bar.content { workspaces = { available = true, workspaces = { state.workspaces[2] } }, time = "time" })[1].text
   == "No workspaces")
 
+-- Same-named workspaces on different outputs have distinct protocol IDs.
 local repeated = { available = true, workspaces = {
-  { id = "3", name = "1", can_activate = true, activate = function() activated = "first" end },
-  { id = "3", name = "1", can_activate = true, activate = function() activated = "second" end },
+  { id = "ouro-a", name = "1", can_activate = true, activate = function() activated = "first" end },
+  { id = "ouro-b", name = "1", can_activate = true, activate = function() activated = "second" end },
   { name = "1", can_activate = false },
 } }
 local duplicates = workspace_items(bar.content { workspaces = repeated, time = "time" })
 assert(#duplicates == 3)
 assert(duplicates[1].key ~= duplicates[2].key and duplicates[1].key ~= duplicates[3].key
-  and duplicates[2].key ~= duplicates[3].key, "duplicate or missing IDs collided")
+  and duplicates[2].key ~= duplicates[3].key, "same names or missing IDs collided")
 duplicates[1].on_press()
 assert(activated == "first")
 duplicates[2].on_press()
-assert(activated == "second", "duplicate IDs must retain separate activation targets")
+assert(activated == "second", "same-name workspaces must retain separate activation targets")
+local reordered = workspace_items(bar.content { workspaces = { available = true, workspaces = {
+  repeated.workspaces[2], repeated.workspaces[1] } }, time = "time" })
+assert(reordered[1].key == duplicates[1].key and reordered[2].key == duplicates[2].key,
+  "workspace keys must follow protocol identity, not list position")
+reordered[1].on_press()
+assert(activated == "first")
 repeated.workspaces[1].hidden = true
 assert(workspace_items(bar.content { workspaces = repeated, time = "time" })[1].key == duplicates[2].key,
   "hiding a workspace changed its sibling's key")

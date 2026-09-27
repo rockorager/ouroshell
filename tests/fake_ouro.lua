@@ -20,6 +20,14 @@ function M.install(overrides)
       palette = { transparent = "#00000000" },
     },
     signal = M.signal,
+    color = {
+      -- Matches Ourokit: replace the alpha channel, returning lowercase #rrggbbaa.
+      with_alpha = function(color, alpha)
+        assert(color:match("^#%x%x%x%x%x%x%x?%x?$") and #color ~= 8, "invalid color")
+        assert(type(alpha) == "number" and alpha >= 0 and alpha <= 1, "invalid alpha")
+        return color:sub(1, 7):lower() .. string.format("%02x", math.floor(alpha * 255 + 0.5))
+      end,
+    },
     component = function(initialize) return function(props) return initialize(props)() end end,
     spawn = function() error("test did not expect ouro.spawn") end,
     sleep = function() error("test did not expect ouro.sleep") end,

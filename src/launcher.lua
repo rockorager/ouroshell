@@ -4,27 +4,17 @@ local config = require("config")
 local f = ouro.tokens.foundation
 
 local M = {}
-local visible_rows = 7
--- Layout dimensions shared by rendering and keyboard paging. Result rows
--- accommodate two text lines; the frame surrounds the 560x620 content area.
+-- Result rows accommodate two text lines; the frame surrounds the 560x620
+-- content area.
 local row_height, palette_height = 56, 620
-local search_height, tab_height = f.spacing_8, f.spacing_6
+local search_height = f.spacing_8
 local frame_padding = f.spacing_4
 local shadow_blur = 12
-
--- The first visible result row: the previous window moved just enough to
--- contain the selection, clamped to the result count. Rendering and keyboard
--- paging both use this, so they cannot disagree about what is visible.
-local function window_start(first, selected, count, capacity)
-  if selected < first then first = selected
-  elseif selected >= first + capacity then first = selected - capacity + 1 end
-  return math.max(1, math.min(first, count - capacity + 1))
-end
 
 function M.background()
   -- The opaque card carries contrast; keep the blurred backdrop light-touch
   -- and dark-tinted even when the content uses the light palette.
-  return ouro.tokens.dark.background:sub(1, 7) .. "4D"
+  return ouro.color.with_alpha(ouro.tokens.dark.background, 0.3)
 end
 
 -- These are shell-owned actions, never commands supplied by search text.
@@ -103,9 +93,9 @@ function M.new(services)
   local catalog = services.catalog
   local state = {
     catalog = catalog,
-    query = ouro.signal(""), selected = ouro.signal(1), first = ouro.signal(1),
+    query = ouro.signal(""), selected = ouro.signal(1),
     scope = ouro.signal("all"), page = ouro.signal(nil), confirming = ouro.signal(nil),
-    input_generation = ouro.signal(0),
+    focus = ouro.signal(0),
     message = ouro.signal(nil), launching = ouro.signal(false),
   }
 
@@ -133,12 +123,11 @@ function M.new(services)
   function state.change(value)
     state.query:set(value)
     state.selected:set(1)
-    state.first:set(1)
     state.message:set(nil)
   end
   local function refocus()
-    -- Re-mount after a mouse action: autofocus on a retained input is one-shot.
-    state.input_generation:set(state.input_generation() + 1)
+    -- Mouse actions move focus; hand it back to the search field.
+    state.focus:set(state.focus() + 1)
   end
   function state.choose_scope(scope)
     state.scope:set(scope)
@@ -152,7 +141,6 @@ function M.new(services)
     if state.confirming() then
       state.confirming:set(nil)
       state.selected:set(1)
-      state.first:set(1)
       state.message:set(nil)
       refocus()
     elseif state.page() then
@@ -163,13 +151,9 @@ function M.new(services)
       services.dismiss()
     end
   end
-  function state.move(delta, capacity)
-    capacity = capacity or visible_rows
+  function state.move(delta)
     local count = state.confirming() and 2 or #state.results()
-    if count == 0 then state.selected:set(1); state.first:set(1); return end
-    local selected = ((state.selected() - 1 + delta) % count) + 1
-    state.selected:set(selected)
-    state.first:set(window_start(state.first(), selected, count, capacity))
+    state.selected:set(count == 0 and 1 or ((state.selected() - 1 + delta) % count) + 1)
   end
   local function execute(entry)
     if state.launching() then return end
@@ -218,9 +202,9 @@ function M.new(services)
       execute(entry)
     end
   end
-  function state.command(command, capacity)
-    if command == "next" then state.move(1, capacity)
-    elseif command == "previous" then state.move(-1, capacity)
+  function state.command(command)
+    if command == "next" then state.move(1)
+    elseif command == "previous" then state.move(-1)
     elseif command == "submit" then
       if state.confirming() then
         if state.selected() == 2 then state.confirm() else state.back() end
@@ -236,6 +220,10 @@ end
 
 local function rule(key, colors)
   return ouro.box { key = key, height = f.border_width_default, width = "fill", background = colors.line }
+end
+
+local function result_key(entry)
+  return (entry.kind == "system" and "system-" or "application-") .. entry.id
 end
 
 local function result_row(state, entry, index, colors)
@@ -257,8 +245,7 @@ local function result_row(state, entry, index, colors)
   }
   if entry.submenu then contents[#contents + 1] = icon("disclosure", "go-next-symbolic", f.spacing_4, colors.muted) end
   return ouro.button {
-    key = (entry.kind == "system" and "system-" or "application-") .. entry.id,
-    label = entry.name, height = row_height,
+    key = result_key(entry), label = entry.name, height = row_height,
     background = index == state.selected() and colors.selected or colors.transparent,
     border = index == state.selected() and colors.selected_border or colors.transparent, border_width = f.border_width_default,
     foreground = colors.foreground, hover = colors.hover,
@@ -314,32 +301,39 @@ function M.content(state, height, width)
     transparent = ouro.tokens.palette.transparent, line = theme.border,
   }
   local results = state.results()
-  local has_apps, has_system = false, false
-  for _, entry in ipairs(results) do
-    if entry.kind == "system" then has_system = true else has_apps = true end
+  -- Each virtual row is one result; the first result of a group also
+  -- carries its heading, so revealing that row reveals the heading too.
+  local headings, previous = {}, nil
+  for index, entry in ipairs(results) do
+    local group = entry.kind == "system" and (state.page() and "Session" or "System") or "Applications"
+    if group ~= previous then headings[index] = group end
+    previous = group
   end
-  local heading_space = f.line_height_2 + f.spacing_1
-  if has_apps and has_system then heading_space = 2 * heading_space + f.border_width_default + f.spacing_1 end
-  -- Keep the keyboard-selected row visible on short outputs as well. Content
-  -- callbacks receive configured logical dimensions; no layout-time mutation.
-  local scopes_height = tab_height + f.border_width_strong + f.border_width_default
-  local chrome_height = search_height + scopes_height + 3 * f.spacing_4 + 2 * f.line_height_2
-  local available = frame_height - 2 * frame_padding - chrome_height - heading_space
-  local capacity = math.max(1, math.min(visible_rows, math.floor((available + f.spacing_1) / (row_height + f.spacing_1))))
-  local first = window_start(state.first(), state.selected(), #results, capacity)
-  local rows, group = {}, nil
-  for index = first, math.min(#results, first + capacity - 1) do
-    local entry = results[index]
-    local next_group = entry.kind == "system" and (state.page() and "Session" or "System") or "Applications"
-    if next_group ~= group then
-      if group then rows[#rows + 1] = rule("rule-" .. next_group, colors) end
-      rows[#rows + 1] = ouro.text { key = "heading-" .. next_group, text = next_group, size = f.typography_2, foreground = colors.muted }
-      group = next_group
-    end
-    rows[#rows + 1] = result_row(state, entry, index, colors)
-  end
-  if #results == 0 then
-    rows[1] = ouro.text { key = "empty", text = "No matches. Try another name or keyword.", size = f.typography_3, foreground = colors.muted }
+  local list
+  if state.confirming() then
+    list = ouro.scroll { key = "results-scroll", axis = "vertical", flex = 1, children = { confirmation(state, colors) } }
+  elseif #results == 0 then
+    list = ouro.box { key = "results-empty", width = "fill", flex = 1, children = {
+      ouro.text { key = "empty", text = "No matches. Try another name or keyword.", size = f.typography_3, foreground = colors.muted },
+    } }
+  else
+    list = ouro.virtual_list { key = "results", flex = 1,
+      item_count = #results, estimated_item_height = row_height + f.spacing_1,
+      item_key = function(index) return result_key(results[index]) end,
+      -- Layout reveals the keyboard selection; no row windowing is needed.
+      ensure_visible = state.selected(),
+      render_item = function(index)
+        local children = {}
+        if headings[index] then
+          if index > 1 then children[#children + 1] = rule("rule", colors) end
+          children[#children + 1] = ouro.text { key = "heading", text = headings[index],
+            size = f.typography_2, foreground = colors.muted }
+        end
+        children[#children + 1] = result_row(state, results[index], index, colors)
+        children[#children + 1] = ouro.box { key = "spacing", height = 0 }
+        return ouro.column { key = "row", gap = f.spacing_1, cross_alignment = "stretch", children = children }
+      end,
+    }
   end
   local tabs = {}
   if state.page() or state.confirming() then
@@ -382,12 +376,12 @@ function M.content(state, height, width)
               ouro.box { key = "search-inset-start", width = f.spacing_1 },
               icon("search-icon", "system-search-symbolic", f.spacing_5, colors.foreground),
               ouro.text_input {
-                key = "search-" .. state.input_generation(), text = state.confirming() and "" or state.query(),
+                key = "search", text = state.confirming() and "" or state.query(),
                 label = "Search apps and commands", placeholder = state.confirming() and "Confirmation" or "Search apps and commands…",
-                autofocus = true, read_only = state.confirming() ~= nil, flex = 1,
+                autofocus = true, focus_request = state.focus(), read_only = state.confirming() ~= nil, flex = 1,
                 padding_x = 0, border_width = 0, background = colors.transparent,
                 foreground = colors.foreground, on_change = state.change,
-                on_command = function(command) state.command(command, capacity) end,
+                on_command = state.command,
               },
               ouro.box { key = "search-inset-end", width = f.spacing_1 },
             } },
@@ -395,9 +389,7 @@ function M.content(state, height, width)
           ouro.column { key = "scopes", gap = 0, cross_alignment = "stretch", children = {
             ouro.row { key = "tabs", gap = f.spacing_2, children = tabs }, rule("scope-rule", colors),
           } },
-          ouro.scroll { key = "results-scroll", axis = "vertical", flex = 1, children = {
-            state.confirming() and confirmation(state, colors) or ouro.column { key = "results", gap = f.spacing_1, cross_alignment = "stretch", children = rows },
-          } },
+          list,
           ouro.text { key = "status", text = status or ("↑ ↓  Navigate     Enter  " .. (state.confirming() and "Choose" or "Open")
               .. "     Esc  " .. ((state.page() or state.confirming()) and "Back" or "Close")),
             size = f.typography_2, foreground = state.message() and colors.error or colors.muted, max_lines = 2 },

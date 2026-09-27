@@ -69,9 +69,13 @@ local function find(tree, key)
     local found = find(child, key)
     if found then return found end
   end
+  for index = 1, tree.render_item and tree.item_count or 0 do
+    local found = find(tree.render_item(index), key)
+    if found then return found end
+  end
 end
 local tree = launcher.content(state)
-assert(launcher.background() == "#0123454D", "overlay must use dark RGB at 30% opacity")
+assert(launcher.background() == "#0123454d", "overlay must use dark RGB at 30% opacity")
 assert(find(tree, "search-shell").background == ouro.tokens.dark.surface)
 assert(find(tree, "search-shell").border == ouro.tokens.dark.input)
 assert(find(tree, "scope-rule").background == ouro.tokens.dark.border)
@@ -82,14 +86,14 @@ ouro.tokens.light = setmetatable({ background = "#FEDCBAFF" }, { __index = funct
 ouro.tokens.palette.light = { red = { step_11 = "light:red11" }, slate = { step_6 = "light:slate6" } }
 scheme = "light"
 local light_tree = launcher.content(state)
-assert(launcher.background() == "#0123454D", "light mode must retain the same dark translucent backdrop")
+assert(launcher.background() == "#0123454d", "light mode must retain the same dark translucent backdrop")
 assert(find(light_tree, "palette").background == "light:card")
 assert(find(light_tree, "palette").border == "light:slate6")
 assert(find(light_tree, "shadow").bytes == find(tree, "shadow").bytes, "theme change must retain the shadow asset")
 assert(find(light_tree, "search-shell").background == "light:surface")
 assert(find(light_tree, "scope-rule").background == "light:border")
 assert(find(light_tree, selected.key).background == "light:accent_selected")
-assert(find(light_tree, "search-" .. state.input_generation()).text == "code", "theme change reset the query")
+assert(find(light_tree, "search").text == "code", "theme change reset the query")
 state.message:set("Test error")
 assert(find(launcher.content(state), "status").foreground == "light:red11")
 state.message:set(nil)
@@ -115,12 +119,12 @@ assert(frame.background == "token:slate3" and frame.border == "token:slate6" and
 assert(frame.border_width == f.border_width_default)
 assert(frame.padding + frame.border_width == f.spacing_4 and frame.width == 592 and frame.height == 652,
   "frame must surround, not shrink, the original content area")
-assert(find(tree, "results-scroll").flex == 1)
+assert(find(tree, "results").flex == 1)
 for _, scope in ipairs({ "all", "apps", "system" }) do
   assert(find(tree, "scope-" .. scope).cross_alignment == "stretch",
     "scope indicators must stretch to their measured label width")
 end
-local input = find(tree, "search-" .. state.input_generation())
+local input = find(tree, "search")
 assert(input.autofocus and type(input.on_command) == "function")
 assert(input.font_size == nil and input.height == nil, "search must use native input metrics")
 local tab = find(tree, "scope-apps").children[1]
@@ -134,38 +138,35 @@ local many = {}
 for index = 1, 10 do many[index] = {id=tostring(index), name=string.format("App %02d", index), exec="app"} end
 state.catalog.entries:set(many); state.change("")
 for _ = 1, 8 do state.command("next") end
-assert(state.selected() == 9 and state.first() == 3)
-local rows = find(launcher.content(state), "results").children
-assert(#rows == 8 and rows[8].key == "application-9")
-assert(rows[8].background ~= "#00000000")
+assert(state.selected() == 9)
+local results = find(launcher.content(state), "results")
+assert(results.kind == "virtual_list" and results.item_count == 10 and results.flex == 1,
+  "every result must be available to the virtual list, not a precomputed window")
+assert(results.ensure_visible == 9, "layout must reveal the keyboard selection")
+assert(results.item_key(9) == "application-9" and results.estimated_item_height > 0)
+local ninth = results.render_item(9)
+assert(ninth.key == "row" and find(ninth, "application-9").background ~= "#00000000")
+assert(find(results.render_item(1), "heading").text == "Applications" and not find(results.render_item(2), "heading"),
+  "only the first row of a group carries its heading")
+assert(find(launcher.content(state, 440), "results").ensure_visible == 9, "short outputs must reveal the selection too")
 state.command("previous")
-assert(state.selected() == 8 and state.first() == 3)
-for _ = 1, 5 do state.command("previous") end
-assert(state.selected() == 3 and state.first() == 3)
-state.command("previous")
-assert(state.selected() == 2 and state.first() == 2)
+assert(state.selected() == 8 and find(launcher.content(state), "results").ensure_visible == 8)
 state.change(""); state.command("previous")
-assert(state.selected() == 10 and state.first() == 4)
+assert(state.selected() == 10)
 state.command("next")
-assert(state.selected() == 1 and state.first() == 1)
+assert(state.selected() == 1)
 state.command("previous"); state.change("App 02")
-assert(state.selected() == 1 and state.first() == 1 and #state.results() == 1)
+assert(state.selected() == 1 and #state.results() == 1)
 state.change("missing"); state.command("previous")
-assert(state.selected() == 1 and state.first() == 1 and #state.results() == 0)
+assert(state.selected() == 1 and #state.results() == 0)
+assert(find(launcher.content(state), "empty") and not find(launcher.content(state), "results"))
 
+-- Mouse actions hand focus back to the search field without remounting it.
+local focus = find(launcher.content(state), "search").focus_request
+state.choose_scope("all")
+local refocused = find(launcher.content(state), "search")
+assert(refocused.focus_request == focus + 1 and refocused.key == "search", "scope clicks must refocus search")
 state.change("App")
-local short_input = find(launcher.content(state, 440), "search-" .. state.input_generation())
-for _ = 1, 8 do short_input.on_command("next") end
-assert(state.selected() == 9 and state.first() == 8)
-local short_rows = find(launcher.content(state, 440), "results").children
-assert(#short_rows == 3 and short_rows[3].key == "application-9", "short output hid the selection")
--- The padded frame and reserved chrome permit a third row at 451px,
--- but not 450px. Both sides must still include the selected ninth result.
-state.first:set(7)
-local boundary_rows = find(launcher.content(state, 451), "results").children
-assert(#boundary_rows == 4 and boundary_rows[4].key == "application-9")
-boundary_rows = find(launcher.content(state, 450), "results").children
-assert(#boundary_rows == 3 and boundary_rows[3].key == "application-9")
 
 -- Empty All is compact; Apps keeps every application; system search is explicit.
 state.open()
@@ -190,7 +191,7 @@ for _, key in ipairs({ "cancel", "confirm", "back" }) do
   assert(button.height == nil and button.radius == nil and button.padding_x == nil and button.font_size == nil,
     "confirmation buttons must use native metrics")
 end
-assert(find(tree, "search-" .. state.input_generation()).read_only)
+assert(find(tree, "search").read_only)
 state.command("submit") -- Enter defaults to Cancel.
 assert(not state.confirming() and #tasks == before)
 state.command("submit"); state.command("next"); state.command("submit")
@@ -240,7 +241,7 @@ assert(find(narrow, "shadow").bytes:find('width="500" height="440"', 1, true))
 assert(find(narrow, "shadow").bytes:find('x="24" y="32" width="452" height="392"', 1, true),
   "shadow must track the clamped frame with an 8px downward offset")
 scheme = "light"
-assert(windows()[2].background == "#0123454D", "mounted overlay must retain its dark tint in light mode")
+assert(windows()[2].background == "#0123454d", "mounted overlay must retain its dark tint in light mode")
 app.actions["launcher.toggle"].handler()
 assert(#windows() == 1 and windows()[1].id == "panel")
 print("PASS: launcher search, scope navigation, safe confirmations, fixed argv, failure states, and full-screen composition")

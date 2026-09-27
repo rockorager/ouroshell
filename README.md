@@ -40,8 +40,10 @@ also requires layer-surface `background`/`background_effect`, styled boxes,
 text-input `placeholder`/`label`, `ouro.stack`, and image fill dimensions.
 The battery and network indicators require Ourokit's [D-Bus client](https://github.com/rockorager/ourokit/commit/7f7db21c7d05)
 and running UPower and NetworkManager services, respectively. D-Bus
-subscriptions use `close_on_owner_change`, which requires Ourokit
-[ba90bb8](https://github.com/rockorager/ourokit/commit/ba90bb8f8f0d) or later.
+subscriptions use `close_on_owner_change`, and the launcher uses
+`ensure_visible`, `focus_request`, and `ouro.color.with_alpha`. These require
+Ourokit [84e44a8](https://github.com/rockorager/ourokit/commit/84e44a8844a1)
+or later.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 
 ```sh

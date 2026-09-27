@@ -41,20 +41,13 @@ function M.content(props)
     transparent = ouro.tokens.palette.transparent,
   }
   local visible = {}
-  local occurrences = {}
   if state.available then
     for index, workspace in ipairs(state.workspaces) do
-      local key = "index:" .. index
-      if workspace.id then
-        -- Ouro currently repeats identifiers across output workspace groups.
-        local occurrence = (occurrences[workspace.id] or 0) + 1
-        occurrences[workspace.id] = occurrence
-        key = "id:" .. occurrence .. ":" .. workspace.id
-      end
       if not workspace.hidden and belongs_to_output(workspace, output) then
         visible[#visible + 1] = {
           workspace = workspace,
-          key = key,
+          -- ext-workspace-v1 identifiers are unique and immutable when sent.
+          key = workspace.id and "id:" .. workspace.id or "index:" .. index,
         }
       end
     end
