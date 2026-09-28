@@ -251,7 +251,7 @@ local function popup(item, callbacks, actions, interaction)
     ouro.column { key = "layout", gap = f.spacing_2, cross_alignment = "stretch", children = children }, callbacks.activate, interaction)
 end
 
-local notification = ouro.component(function(props)
+local notification = ouro.stateful(function(props)
   local active, menu, invoking = ouro.signal(false), ouro.signal(nil), ouro.signal(nil)
   local function close_menu(open)
     if menu() == open then menu:set(nil) end

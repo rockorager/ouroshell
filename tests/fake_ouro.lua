@@ -28,7 +28,7 @@ function M.install(overrides)
         return color:sub(1, 7):lower() .. string.format("%02x", math.floor(alpha * 255 + 0.5))
       end,
     },
-    component = function(initialize) return function(props) return initialize(props)() end end,
+    stateful = function(initialize) return function(props) return initialize(props)() end end,
     spawn = function() error("test did not expect ouro.spawn") end,
     spawn_app = function() error("test did not expect ouro.spawn_app") end,
     sleep = function() error("test did not expect ouro.sleep") end,

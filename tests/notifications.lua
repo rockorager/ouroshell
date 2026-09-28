@@ -19,7 +19,7 @@ local ouro = require("fake_ouro").install {
   exit = function(code) exited = code end,
 }
 -- Components mount once per key, so their signals survive re-renders.
-ouro.component = function(initialize)
+ouro.stateful = function(initialize)
   local mounts = {}
   return function(props)
     local mount = mounts[props.key]
