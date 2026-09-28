@@ -204,16 +204,19 @@ function M.content(state, time)
     size = f.typography_2, alignment = "center", foreground = theme.muted_foreground, max_lines = 4 }
   return ouro.box { key = "lock-screen", width = "fill", height = "fill", padding = f.spacing_5,
     background = theme.background, alignment = "center", children = {
-      ouro.column { key = "center", width = 400, gap = f.spacing_6, cross_alignment = "stretch", children = {
-        ouro.column { key = "time", gap = f.spacing_2, cross_alignment = "stretch", children = {
-          ouro.text { key = "clock", text = clock or time, size = f.typography_9,
-            alignment = "center", foreground = theme.foreground },
-          ouro.text { key = "date", text = date or "", size = f.typography_3,
-            alignment = "center", foreground = theme.muted_foreground },
+      -- Rows and columns have no width; the Box sets the card width.
+      ouro.box { key = "center", width = 400, children = {
+        ouro.column { key = "stack", gap = f.spacing_6, cross_alignment = "stretch", children = {
+          ouro.column { key = "time", gap = f.spacing_2, cross_alignment = "stretch", children = {
+            ouro.text { key = "clock", text = clock or time, size = f.typography_9,
+              alignment = "center", foreground = theme.foreground },
+            ouro.text { key = "date", text = date or "", size = f.typography_3,
+              alignment = "center", foreground = theme.muted_foreground },
+          } },
+          ouro.box { key = "card", width = "fill", padding = f.spacing_5, radius = f.radius_6,
+            background = theme.card, border = theme.border, border_width = f.border_width_default,
+            children = { ouro.column { key = "form", gap = f.spacing_4, cross_alignment = "stretch", children = children } } },
         } },
-        ouro.box { key = "card", width = "fill", padding = f.spacing_5, radius = f.radius_6,
-          background = theme.card, border = theme.border, border_width = f.border_width_default,
-          children = { ouro.column { key = "form", gap = f.spacing_4, cross_alignment = "stretch", children = children } } },
       } },
     } }
 end
