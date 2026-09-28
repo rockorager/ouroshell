@@ -46,10 +46,10 @@ Ourokit [84e44a8](https://github.com/rockorager/ourokit/commit/84e44a8844a1)
 or later.
 Idle handling additionally requires the native session/authentication work:
 `ouro.session.idle`, `outputs`, `power`, `lock`, `ouro.lock_surface`,
-`ouro.auth.start`, `ouro.auth_input`, and `ouro.spawn_app`. These changes are
-currently unpublished; neither the setup script's pinned runtime nor the
-older revisions linked above provide them. Use the matching Ourokit checkout
-and its `docs/session.md` until that work lands.
+`ouro.auth.start`, `ouro.auth_input`, and `ouro.spawn_app`. These require
+Ourokit [e31fc85](https://github.com/rockorager/ourokit/commit/e31fc85709e1d7168b079f175540fe26f608e25a)
+or later, which the setup script pins. See Ourokit's `docs/session.md` for
+the native API contracts and security limits.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 
 ```sh
