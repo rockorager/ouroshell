@@ -20,6 +20,7 @@ ouro.tokens = {
 local scheme = "dark"
 package.loaded.appearance = {
   colors = function() return ouro.tokens[scheme], ouro.tokens.palette[scheme] end,
+  scheme = function() return scheme end,
   connect = function() end,
 }
 
@@ -172,10 +173,10 @@ state.change("App")
 
 -- Empty All is compact; Apps keeps every application; system search is explicit.
 state.open()
-assert(#state.results() == 6 and state.results()[4].id == "lock" and state.results()[5].id == "session")
+assert(#state.results() == 7 and state.results()[4].id == "lock" and state.results()[5].id == "session")
 state.choose_scope("apps"); assert(#state.results() == 10)
 state.change("reboot"); assert(#state.results() == 0)
-state.choose_scope("system"); assert(#state.results() == 3)
+state.choose_scope("system"); assert(#state.results() == 4)
 state.command("next"); state.command("submit")
 assert(state.page() == "session" and #state.results() == 3)
 state.command("cancel"); assert(state.page() == nil and state.scope() == "system")
@@ -222,7 +223,7 @@ local failed = launcher.new { catalog = failed_catalog, dismiss = function() end
   idle = { caffeinated = ouro.signal(false), lock = function() error("denied") end },
   call = function() return { result = { isError = true, structuredContent = { error = { message = "denied" } } } } end }
 failed_catalog.load(); tasks[#tasks]()
-assert(failed_catalog.phase() == "error" and #failed.results() == 3)
+assert(failed_catalog.phase() == "error" and #failed.results() == 4)
 assert(find(launcher.content(failed), "status").text:find("offline", 1, true), "catalog failure must be visible")
 failed.change("lock"); failed.command("submit"); tasks[#tasks]()
 assert(not failed.launching() and failed.message():find("denied", 1, true))
@@ -239,7 +240,7 @@ local coffee = launcher.new {
   catalog = catalog.fixed({}), idle = caffeine, dismiss = function() dismissed = true end,
   call = function() error("caffeine must not launch a subprocess") end,
 }
-assert(#coffee.results() == 3)
+assert(#coffee.results() == 4)
 coffee.change("keep awake")
 assert(#coffee.results() == 1 and coffee.results()[1].name == "Caffeinate")
 dismissed = false
@@ -261,6 +262,29 @@ assert(coffee.page() == "session" and #coffee.results() == 3)
 coffee.open(); coffee.change("idle"); caffeine_error = true; dismissed = false
 coffee.command("submit"); tasks[#tasks]()
 assert(not caffeine.caffeinated() and not dismissed and coffee.message():find("inhibitor denied", 1, true))
+
+-- The theme action flips the preference through prefer's CLI, labeled by the
+-- effective scheme, and is never part of Apps or the Session submenu.
+local themed = launcher.new {
+  catalog = catalog.fixed({}), dismiss = function() dismissed = true end,
+  call = function(address, tool, arguments)
+    call = { address, tool, arguments }; return { result = { isError = false } }
+  end,
+}
+for _, case in ipairs({ { "dark", "Switch to light theme", "light" }, { "light", "Switch to dark theme", "dark" } }) do
+  scheme = case[1]
+  themed.open(); themed.change("theme")
+  local result = themed.results()
+  assert(#result == 1 and result[1].id == "color-scheme" and result[1].name == case[2])
+  assert(find(launcher.content(themed), "system-color-scheme").label == case[2])
+  dismissed = false
+  themed.command("submit"); tasks[#tasks]()
+  assert(call[2] == "run" and table.concat(call[3].argv, "|") == "prefer|set|color-scheme|" .. case[3])
+  assert(dismissed and not themed.message())
+end
+scheme = "dark"
+themed.open(); themed.change("dark mode"); assert(themed.results()[1].id == "color-scheme")
+themed.choose_scope("apps"); themed.change("theme"); assert(#themed.results() == 0)
 
 ouro.date = function() return "12:00" end
 ouro.time = function() return 0 end

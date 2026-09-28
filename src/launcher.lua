@@ -125,6 +125,18 @@ function M.new(services)
           keywords = { "caffeinate", "decaffeinate", "idle", "keep awake" },
         }
       end
+      if not state.page() then
+        -- prefer's setter is Varlink-only; its CLI stores the preference and
+        -- the Settings portal broadcasts it, which the shell then follows.
+        local dark = appearance.scheme() == "dark"
+        actions[#actions + 1] = {
+          id = "color-scheme", name = dark and "Switch to light theme" or "Switch to dark theme", kind = "system",
+          icon = dark and "weather-clear-symbolic" or "weather-clear-night-symbolic",
+          description = "Toggle the system color scheme between light and dark",
+          keywords = { "theme", "toggle color scheme", "dark mode", "light mode", "appearance" },
+          argv = { "prefer", "set", "color-scheme", dark and "light" or "dark" },
+        }
+      end
       for _, action in ipairs(actions) do
         if score(action, query) then results[#results + 1] = action end
       end

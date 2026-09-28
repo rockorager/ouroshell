@@ -144,8 +144,11 @@ change selection, Enter opens, and Escape goes back or dismisses. Scope buttons
 and rows are clickable. Reopening resets the query and any pending confirmation.
 Application-provided menu items are not implemented or shown yet.
 
-System offers Lock screen, Session, and Caffeinate (Decaffeinate while active).
-Caffeinate pauses inactivity handling; see below for its scope.
+System offers Lock screen, Session, Caffeinate (Decaffeinate while active),
+and Switch to dark/light theme. Caffeinate pauses inactivity handling; see below
+for its scope. The theme action runs `prefer set color-scheme dark|light`, since
+prefer's setter is Varlink-only; the shell then follows the portal's change.
+It is searchable as `theme`, `dark mode`, and `light mode`.
 Session contains Log out, Restart, and Shut down; these actions are also
 directly searchable (including `reboot`,
 `shutdown`, and `logout`). Each requires confirmation with **Cancel selected by

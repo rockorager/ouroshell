@@ -11,6 +11,11 @@ function M.colors()
   return ouro.tokens[scheme()], ouro.tokens.palette[scheme()]
 end
 
+-- The effective scheme: "dark" or "light".
+function M.scheme()
+  return scheme()
+end
+
 local function update(value)
   scheme:set(value and value.signature == "u" and value.value == 1 and "dark" or "light")
 end
