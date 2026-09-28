@@ -3,6 +3,7 @@ package.path = "src/?.lua;tests/?.lua;" .. package.path
 local tasks = {}
 -- Distinct sentinel values catch copied hex colors instead of catalog usage.
 local ouro = require("fake_ouro").install { spawn = function(fn) tasks[#tasks + 1] = fn end }
+ouro.spawn_app = ouro.spawn
 ouro.tokens = {
   foundation = {
     typography_2 = 14, typography_3 = 23, typography_7 = 28, line_height_2 = 20,
@@ -45,9 +46,10 @@ local terminal = launcher.launch_argv({ terminal = true }, function(_, options)
 end)
 assert(table.concat(terminal, "|") == "env|--chdir=/tmp/a b|--|monstar|-e|htop")
 
-local dismissed, call
+local dismissed, call, locked
 local state = launcher.new {
   catalog = catalog.fixed(entries), dismiss = function() dismissed = true end,
+  idle = { caffeinated = ouro.signal(false), lock = function() locked = true end },
   prepare_launch = function(entry) return { argv = { entry.exec }, cwd = ouro.json.null } end,
   call = function(address, tool, arguments)
     call = { address, tool, arguments }; return { result = { isError = false } }
@@ -170,10 +172,10 @@ state.change("App")
 
 -- Empty All is compact; Apps keeps every application; system search is explicit.
 state.open()
-assert(#state.results() == 5 and state.results()[4].id == "lock" and state.results()[5].id == "session")
+assert(#state.results() == 6 and state.results()[4].id == "lock" and state.results()[5].id == "session")
 state.choose_scope("apps"); assert(#state.results() == 10)
 state.change("reboot"); assert(#state.results() == 0)
-state.choose_scope("system"); assert(#state.results() == 2)
+state.choose_scope("system"); assert(#state.results() == 3)
 state.command("next"); state.command("submit")
 assert(state.page() == "session" and #state.results() == 3)
 state.command("cancel"); assert(state.page() == nil and state.scope() == "system")
@@ -208,20 +210,57 @@ for _, case in ipairs({ { "shutdown", "run", "systemctl|poweroff" }, { "logout",
   assert(call[2] == case[2])
   if case[3] then assert(table.concat(call[3].argv, "|") == case[3]) else assert(next(call[3]) == nil) end
 end
+local previous_call = call
 state.open(); state.change("lock"); state.command("submit"); tasks[#tasks]()
-assert(table.concat(call[3].argv, "|") == "loginctl|lock-session|auto")
+assert(locked and call == previous_call, "lock must use native ownership, not launch loginctl")
 state.open(); state.change("restart"); state.command("submit"); state.open()
 assert(not state.confirming() and state.query() == "" and state.scope() == "all")
 
 -- An app catalog failure cannot remove the shell's system actions.
 local failed_catalog = catalog.new(function() error("offline") end)
 local failed = launcher.new { catalog = failed_catalog, dismiss = function() end,
+  idle = { caffeinated = ouro.signal(false), lock = function() error("denied") end },
   call = function() return { result = { isError = true, structuredContent = { error = { message = "denied" } } } } end }
 failed_catalog.load(); tasks[#tasks]()
-assert(failed_catalog.phase() == "error" and #failed.results() == 2)
+assert(failed_catalog.phase() == "error" and #failed.results() == 3)
 assert(find(launcher.content(failed), "status").text:find("offline", 1, true), "catalog failure must be visible")
 failed.change("lock"); failed.command("submit"); tasks[#tasks]()
 assert(not failed.launching() and failed.message():find("denied", 1, true))
+
+-- Caffeine is a local controller action, searchable in All/System, never Apps
+-- or the destructive Session submenu. Its label follows the held inhibitor.
+local caffeine = { caffeinated = ouro.signal(false) }
+local caffeine_error = false
+function caffeine.toggle()
+  if caffeine_error then error("inhibitor denied") end
+  caffeine.caffeinated:set(not caffeine.caffeinated())
+end
+local coffee = launcher.new {
+  catalog = catalog.fixed({}), idle = caffeine, dismiss = function() dismissed = true end,
+  call = function() error("caffeine must not launch a subprocess") end,
+}
+assert(#coffee.results() == 3)
+coffee.change("keep awake")
+assert(#coffee.results() == 1 and coffee.results()[1].name == "Caffeinate")
+dismissed = false
+coffee.command("submit")
+local queued = #tasks
+coffee.command("submit")
+assert(#tasks == queued and not caffeine.caffeinated())
+tasks[#tasks]()
+assert(dismissed and caffeine.caffeinated())
+coffee.open(); coffee.change("caffeinate")
+assert(coffee.results()[1].name == "Decaffeinate")
+assert(find(launcher.content(coffee), "system-caffeine").label == "Decaffeinate")
+coffee.command("submit"); tasks[#tasks]()
+assert(not caffeine.caffeinated())
+coffee.open(); coffee.choose_scope("apps"); coffee.change("idle")
+assert(#coffee.results() == 0)
+coffee.choose_scope("system"); coffee.command("next"); coffee.command("submit")
+assert(coffee.page() == "session" and #coffee.results() == 3)
+coffee.open(); coffee.change("idle"); caffeine_error = true; dismissed = false
+coffee.command("submit"); tasks[#tasks]()
+assert(not caffeine.caffeinated() and not dismissed and coffee.message():find("inhibitor denied", 1, true))
 
 ouro.date = function() return "12:00" end
 ouro.time = function() return 0 end

@@ -34,8 +34,11 @@ return ouro.app {
   id = "dev.ouro.shell.preview",
   run = function()
     appearance.connect()
+    local caffeinated = ouro.signal(false)
     launcher_state = launcher.new {
       dismiss = function() visible:set(false) end,
+      idle = { caffeinated = caffeinated, toggle = function() caffeinated:set(not caffeinated()) end,
+        lock = function() error("Preview only — no lock was requested") end },
       prepare_launch = function(entry) return { argv = { entry.exec } } end,
       -- Preview is deliberately incapable of executing apps or session actions.
       call = function() return { result = { isError = true, structuredContent = {

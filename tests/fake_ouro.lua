@@ -8,8 +8,8 @@ function M.signal(value)
   return setmetatable({ set = function(_, next_value) value = next_value end }, { __call = function() return value end })
 end
 
-local widgets = { "app", "layer_surface", "box", "row", "column", "stack", "scroll", "virtual_list",
-  "text", "text_input", "button", "switch", "image" }
+local widgets = { "app", "layer_surface", "lock_surface", "box", "row", "column", "stack", "scroll", "virtual_list",
+  "text", "text_input", "auth_input", "button", "switch", "image" }
 
 function M.install(overrides)
   local ouro = {
@@ -30,6 +30,7 @@ function M.install(overrides)
     },
     component = function(initialize) return function(props) return initialize(props)() end end,
     spawn = function() error("test did not expect ouro.spawn") end,
+    spawn_app = function() error("test did not expect ouro.spawn_app") end,
     sleep = function() error("test did not expect ouro.sleep") end,
     time = function() return 0 end,
     date = function() return "time" end,

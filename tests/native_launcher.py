@@ -18,7 +18,7 @@ from PIL import Image, ImageChops
 from gi.repository import Gio, GLib
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT.parent / "ourokit/zig-out/bin/ouroctl"
+BINARY = Path(os.environ.get("OUROCTL", ROOT.parent / "ourokit/zig-out/bin/ouroctl"))
 
 
 class Portal:
@@ -57,6 +57,84 @@ class Portal:
     def close(self):
         self.bus.unregister_object(self.registration)
         self.bus.close_sync(None)
+
+
+class Logind:
+    """Private inhibitor fixture; pipe EOF proves the shell released its FD."""
+    def __init__(self, address):
+        self.readers = []
+        self.delay_readers = []
+        self.denied = False
+        self.preparing = False
+        self.locked_hint = False
+        self.suspends = 0
+        self.bus = Gio.DBusConnection.new_for_address_sync(address,
+            Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+        xml = """<node><interface name='org.freedesktop.login1.Manager'>
+          <method name='Inhibit'><arg type='s' direction='in'/><arg type='s' direction='in'/>
+          <arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='h' direction='out'/></method>
+          <method name='GetSession'><arg type='s' direction='in'/><arg type='o' direction='out'/></method>
+          <method name='Suspend'><arg type='b' direction='in'/></method>
+          <property name='PreparingForSleep' type='b' access='read'/>
+          <signal name='PrepareForSleep'><arg type='b'/></signal>
+        </interface></node>"""
+        self.registration = self.bus.register_object("/org/freedesktop/login1",
+            Gio.DBusNodeInfo.new_for_xml(xml).interfaces[0], self.method,
+            lambda *args: GLib.Variant("b", self.preparing), None)
+        self.session_path = "/org/freedesktop/login1/session/c7"
+        xml = """<node><interface name='org.freedesktop.login1.Session'>
+          <property name='Name' type='s' access='read'/>
+          <method name='SetLockedHint'><arg type='b' direction='in'/></method>
+          <signal name='Lock'/><signal name='Unlock'/>
+        </interface></node>"""
+        self.session_registration = self.bus.register_object(self.session_path,
+            Gio.DBusNodeInfo.new_for_xml(xml).interfaces[0], self.method,
+            lambda *args: GLib.Variant("s", "fixture-user"), None)
+        self.bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+            "RequestName", GLib.Variant("(su)", ("org.freedesktop.login1", 4)), None, Gio.DBusCallFlags.NONE, 1000, None)
+
+    def method(self, bus, sender, path, interface, method, parameters, invocation):
+        if method == "GetSession":
+            assert parameters.unpack() == ("auto",)
+            invocation.return_value(GLib.Variant("(o)", (self.session_path,)))
+            return
+        if method == "SetLockedHint":
+            self.locked_hint = parameters.unpack()[0]
+            invocation.return_value(GLib.Variant("()", ()))
+            return
+        if method == "Suspend":
+            assert parameters.unpack() == (False,)
+            self.suspends += 1
+            invocation.return_value(GLib.Variant("()", ()))
+            return
+        assert method == "Inhibit"
+        what, who, why, mode = parameters.unpack()
+        assert who == "Ouroshell"
+        assert (what, why, mode) in (("idle", "Caffeinated from the launcher", "block"),
+                                   ("sleep", "Lock the session before sleep", "delay"))
+        if self.denied and what == "idle":
+            invocation.return_dbus_error("org.freedesktop.DBus.Error.AccessDenied", "Fixture inhibitor denied")
+            return
+        reader, writer = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+        (self.readers if what == "idle" else self.delay_readers).append(reader)
+        fds = Gio.UnixFDList.new()
+        index = fds.append(writer)
+        os.close(writer)
+        invocation.return_value_with_unix_fd_list(GLib.Variant("(h)", (index,)), fds)
+
+    def held(self, reader=None):
+        try:
+            assert os.read(self.readers[-1] if reader is None else reader, 1) == b""
+            return False
+        except BlockingIOError:
+            return True
+
+    def close(self):
+        self.bus.unregister_object(self.registration)
+        self.bus.unregister_object(self.session_registration)
+        self.bus.close_sync(None)
+        for reader in self.readers + self.delay_readers:
+            os.close(reader)
 
 
 def pump(seconds):
@@ -213,6 +291,7 @@ def main():
         pointer = None
         keyboard = None
         portal = None
+        logind = None
         bus = None
         with (artifacts / "sway.log").open("wb") as sway_log, (artifacts / "shell.log").open("wb") as shell_log:
             compositor = subprocess.Popen(["sway", "-c", str(config), "-d"], env=env, stdout=sway_log, stderr=sway_log)
@@ -229,12 +308,14 @@ def main():
                 address = bus.stdout.readline().strip()
                 assert address.startswith("unix:"), address
                 env["DBUS_SESSION_BUS_ADDRESS"] = address
+                env["DBUS_SYSTEM_BUS_ADDRESS"] = address
 
                 def set_scheme(scheme):
                     portal.change({"default": 0, "dark": 1, "light": 2}[scheme])
 
                 if not appearance_only:
                     portal = Portal(address)
+                    logind = Logind(address)
                 # A headless seat otherwise loses keyboard capability between
                 # wtype invocations. Keep a device present like a real desktop.
                 keyboard = subprocess.Popen(["wtype", "-s", "600000"], env=env)
@@ -339,9 +420,31 @@ def main():
                     while span < 100 and image.getpixel((left + span, line_y)) == accent:
                         span += 1
                     assert 40 <= span < 100, ("scope underline must span the padded All label", span)
+                keys("caffeinate")
+                capture("caffeinate")
+                keys("-k", "Return")
+                pump(1)
+                assert len(logind.readers) == 1 and logind.held(), "inhibitor did not survive launcher dismissal"
+                call(endpoint, "launcher.toggle")
+                keys("idle")
+                capture("decaffeinate")
+                keys("-k", "Return")
+                pump(1)
+                assert not logind.held(), "decaffeinate leaked its inhibitor"
+                call(endpoint, "launcher.toggle")
+                logind.denied = True
+                keys("caffeinate", "-k", "Return")
+                capture("caffeine-denied")
+                assert len(logind.readers) == 1, "denied request acquired an inhibitor"
+                logind.denied = False
+                keys("-k", "Return")
+                pump(1)
+                assert len(logind.readers) == 2 and logind.held(), "retry after denial failed"
                 # Reload now accepts structural window changes. The fresh Lua
                 # state closes the launcher; reopen it before testing input.
                 call(endpoint, "runtime.reload")
+                pump(.2)
+                assert not logind.held(), "reload leaked its inhibitor"
                 call(endpoint, "launcher.toggle")
                 keys("Fixture")
                 searched = capture("search")
@@ -505,6 +608,8 @@ def main():
                     keyboard.wait(timeout=10)
                 if portal:
                     portal.close()
+                if logind:
+                    logind.close()
                 if bus:
                     bus.terminate()
                     bus.wait(timeout=10)

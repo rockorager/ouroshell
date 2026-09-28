@@ -159,6 +159,9 @@ require("battery").connect = function() return function() return power end end
 require("network").connect = function() return function() return connectivity end end
 require("notifications").connect = function() end
 require("clock").connect = function() return function() return time end end
+local locked = false
+require("idle").connect = function() return { caffeinated = ouro.signal(false), toggle = function() end,
+  locker = { visible = function() return locked end } } end
 local app = dofile("src/application.lua")
 assert(app.theme == nil, "shell must inherit the host theme")
 local running = app.run()
@@ -197,4 +200,14 @@ assert(#running.windows() == 2 and running.windows()[2].id == "notifications")
 app.actions["launcher.toggle"].handler()
 app.actions["launcher.toggle"].handler()
 assert(#running.windows() == 1)
+locked = true
+app.actions["launcher.toggle"].handler()
+local locked_windows = running.windows()
+assert(#locked_windows == 1 and locked_windows[1].kind == "lock_surface" and locked_windows[1].outputs == "all",
+  "the real lock declaration must replace the panel and every overlay")
+app.actions["notifications.toggle"].handler()
+assert(#running.windows() == 1 and running.windows()[1].id == "lock",
+  "external overlay requests must not add windows while locked")
+locked = false
+assert(running.windows()[1] == panel, "unlock must restore the panel declaration")
 print("PASS: workspace ordering, visibility, activation, states, status indicators, and overlays")

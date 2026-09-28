@@ -20,7 +20,7 @@ end
 -- These are shell-owned actions, never commands supplied by search text.
 local lock = {
   id = "lock", name = "Lock screen", kind = "system", icon = "system-lock-screen-symbolic",
-  argv = { "loginctl", "lock-session", "auto" }, keywords = { "lock" },
+  keywords = { "lock" },
 }
 local session = {
   id = "session", name = "Session…", kind = "system", icon = "system-shutdown-symbolic",
@@ -88,11 +88,13 @@ end
 
 -- services.catalog: application catalog from catalog.lua
 -- services.dismiss: closes the launcher
+-- services.idle: native session controller with lock, toggle and status
 -- services.prepare_launch, services.call: optional launch overrides for fixtures
 function M.new(services)
   local catalog = services.catalog
   local state = {
     catalog = catalog,
+    idle = services.idle,
     query = ouro.signal(""), selected = ouro.signal(1),
     scope = ouro.signal("all"), page = ouro.signal(nil), confirming = ouro.signal(nil),
     focus = ouro.signal(0),
@@ -113,6 +115,16 @@ function M.new(services)
       local actions = state.page() and session_actions
         or query == "" and { lock, session }
         or { lock, session_actions[1], session_actions[2], session_actions[3] }
+      if services.idle and not state.page() then
+        local active = services.idle.caffeinated()
+        actions[#actions + 1] = {
+          id = "caffeine", name = active and "Decaffeinate" or "Caffeinate", kind = "system",
+          icon = "alarm-symbolic",
+          description = active and "Resume automatic locking, display sleep, and idle suspend"
+            or "Pause automatic locking, display sleep, and idle suspend",
+          keywords = { "caffeinate", "decaffeinate", "idle", "keep awake" },
+        }
+      end
       for _, action in ipairs(actions) do
         if score(action, query) then results[#results + 1] = action end
       end
@@ -159,8 +171,15 @@ function M.new(services)
     if state.launching() then return end
     state.launching:set(true)
     state.message:set(nil)
-    ouro.spawn(function()
+    local native_action = entry.kind == "system" and (entry.id == "lock" or entry.id == "caffeine")
+    local spawn = native_action and ouro.spawn_app or ouro.spawn
+    spawn(function()
       local ok, failure = pcall(function()
+        if native_action then
+          local controller = assert(services.idle, "Native session handling is unavailable")
+          if entry.id == "lock" then controller.lock() else controller.toggle() end
+          return
+        end
         local tool, arguments = "run", nil
         if entry.kind == "system" then
           tool = entry.tool or "run"
@@ -350,7 +369,7 @@ function M.content(state, height, width)
       } }
     end
   end
-  local status = state.message()
+  local status = state.message() or (state.idle and state.idle.status and state.idle.status())
   if not status and state.launching() then status = "Sending request…" end
   if not status and state.scope() ~= "system" and not state.page() then
     local phase = state.catalog.phase()

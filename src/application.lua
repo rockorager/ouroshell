@@ -5,6 +5,8 @@ local appearance = require("appearance")
 local battery = require("battery")
 local catalog = require("catalog")
 local clock = require("clock")
+local idle = require("idle")
+local lock = require("lock")
 local network = require("network")
 local notifications = require("notifications")
 
@@ -61,7 +63,8 @@ return ouro.app {
     local connectivity = network.connect()
     local workspaces = ouro.shell.workspaces.connect()
     local time = clock.connect()
-    launcher_state = launcher.new { catalog = applications, dismiss = dismiss_launcher }
+    local session = idle.connect { dismiss = function() overlay:set(nil) end }
+    launcher_state = launcher.new { catalog = applications, dismiss = dismiss_launcher, idle = session }
     applications.load()
 
     local panel = ouro.layer_surface {
@@ -83,6 +86,8 @@ return ouro.app {
         end,
     }
     return { windows = function()
+      local lock_window = lock.window(session.locker, time)
+      if lock_window then return { lock_window } end
       local windows = { panel }
       if launcher_open() then
         windows[#windows + 1] = ouro.layer_surface {

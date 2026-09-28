@@ -44,6 +44,12 @@ subscriptions use `close_on_owner_change`, and the launcher uses
 `ensure_visible`, `focus_request`, and `ouro.color.with_alpha`. These require
 Ourokit [84e44a8](https://github.com/rockorager/ourokit/commit/84e44a8844a1)
 or later.
+Idle handling additionally requires the native session/authentication work:
+`ouro.session.idle`, `outputs`, `power`, `lock`, `ouro.lock_surface`,
+`ouro.auth.start`, `ouro.auth_input`, and `ouro.spawn_app`. These changes are
+currently unpublished; neither the setup script's pinned runtime nor the
+older revisions linked above provide them. Use the matching Ourokit checkout
+and its `docs/session.md` until that work lands.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 
 ```sh
@@ -77,8 +83,9 @@ Development endpoints are private per process, not the global launcher socket.
 
 ## Install as a systemd user service
 
-Install `ouroctl` in `~/.local/bin` and the shell in
-`~/.local/share/ouroshell`, then install the user units:
+Install the matching `ouroctl` in `~/.local/bin`. Validate the native lock and
+PAM policy described below before enabling the service. Install the shell in
+`~/.local/share/ouroshell`, then install the user unit:
 
 ```sh
 mkdir -p ~/.local/share/ouroshell ~/.config/systemd/user
@@ -99,8 +106,10 @@ The service launches the panel and notification daemon directly with `--mcp`.
 It owns `$XDG_RUNTIME_DIR/ourokit/apps/dev.ouro.shell` and stops with the graphical
 session. Do not run a separate shell process alongside the managed service.
 Window and launcher state are not restored after a restart. Graceful shutdown
-removes the endpoint. After a forced kill, remove a stale endpoint only after
-confirming no process still owns it, then restart the service.
+removes the endpoint. After a forced kill while **unlocked**, remove a stale
+endpoint only after confirming no process still owns it, then restart the
+service. If the session was locked, follow the recovery procedure below;
+restarting Ouroshell does not recover a held compositor lock.
 
 Stop and disable another notification daemon before activating Ouroshell. Only
 one service can own `org.freedesktop.Notifications`; Ouroshell retries if another
@@ -134,12 +143,14 @@ change selection, Enter opens, and Escape goes back or dismisses. Scope buttons
 and rows are clickable. Reopening resets the query and any pending confirmation.
 Application-provided menu items are not implemented or shown yet.
 
-System offers Lock screen and Session. Session contains Log out, Restart, and
-Shut down; these actions are also directly searchable (including `reboot`,
+System offers Lock screen, Session, and Caffeinate (Decaffeinate while active).
+Caffeinate pauses inactivity handling; see below for its scope.
+Session contains Log out, Restart, and Shut down; these actions are also
+directly searchable (including `reboot`,
 `shutdown`, and `logout`). Each requires confirmation with **Cancel selected by
 default**. Actions use fixed requests, never commands derived from search text:
 
-- Lock: `loginctl lock-session auto`, requiring logind and a session lock handler.
+- Lock: acquire a native session lock inside Ouroshell.
 - Log out: Ouro's `exit` tool, ending this compositor session rather than all
   sessions belonging to the user.
 - Restart: `systemctl reboot`.
@@ -147,8 +158,9 @@ default**. Actions use fixed requests, never commands derived from search text:
 
 No force flags or privilege bypasses are used. Request submission failures stay
 visible in the launcher. Ouro's `run` acknowledges process launch, not eventual
-exit status: acceptance does not prove the computer restarted or the screen
-locked. System policy, inhibitors, and the installed lock handler still apply.
+exit status: acceptance does not prove the computer restarted. Native locking
+waits for the compositor's `locked` event. System policy and inhibitors still
+apply to power requests.
 
 Exec parsing and field-code expansion are delegated to
 `ouro.xdg.applications.prepare_launch`; no command is shell-evaluated. Launches
@@ -166,6 +178,75 @@ accepts structural window changes and resets the launcher's Lua state.
 
 Ourokit pins Wayring's destroyed-object dispatch fix, which is required to
 close a focused window without losing the shared Wayland connection.
+
+## Idle, locking, and lid close
+
+Ouroshell owns idle timers, per-output power control, the lock screen and PAM
+authentication through Ourokit. No swayidle, swaylock or wlopm processes or
+companion units are used. The defaults in `src/config.lua` are:
+
+- **5 minutes idle:** acquire a native session lock.
+- **10 minutes idle:** turn all displays off; input turns them on.
+- **30 minutes idle:** request suspend through logind.
+- **Before suspend:** lock, including when suspend comes from closing the lid.
+- **After resume:** turn displays back on. Authentication is still required.
+- **Explicit lock:** handle logind's session Lock signal, including the launcher.
+
+Display-off and automatic suspend wait for the compositor's actual `locked`
+acknowledgement. Ouroshell holds a logind sleep-delay inhibitor and releases it
+only after that acknowledgement when preparing to sleep. Logind bounds this
+delay with `InhibitDelayMaxSec`: a failed or slow lock cannot guarantee a secure
+resume once that deadline expires. Errors never authorize unlock.
+
+The lock screen covers all outputs, including hotplugged displays, with a
+centered credential card and clock. Ourokit's native `auth_input` always masks
+entry, including PAM echo-on prompts; credentials never pass through Lua.
+Only a successful PAM result for the current lock and authentication attempt
+can unlock. Enter or the Unlock button submits a response, not an unlock
+authorization. Escape in the credential field cancels authentication while
+keeping the session locked.
+Authentication is canceled before sleep and restarted on resume.
+
+The account comes from logind's session identity. `pam_service = "login"` in
+`src/config.lua` is a development default, **not a portable approved locker
+policy**. Review the machine's PAM service and authentication/account rules
+before relying on this locker; configure a dedicated service if appropriate.
+Do not accept account or PAM-service names from lock-screen text or MCP input.
+
+**Recovery:** current Ouro remains locked after the acknowledged lock owner
+dies and rejects replacement lockers. A shell/service restart cannot recover
+that desktop. From a trusted VT or SSH login, identify the affected graphical
+session with `loginctl list-sessions`, then terminate that specific session
+with `loginctl terminate-session SESSION_ID` and start a fresh graphical login.
+This ends its applications and can lose unsaved work. Test access to this
+recovery path before testing the locker. Do not reload or restart a locked
+shell; Ourokit rejects reload while holding a lock.
+
+Lid-close policy stays with logind (`HandleLidSwitch`, `HandleLidSwitchDocked`,
+and `HandleLidSwitchExternalPower` in `logind.conf`). Ouroshell does not override
+docked/external-display policy or take a `handle-lid-switch` inhibitor. A lid
+close that logind ignores does not itself lock or suspend the desktop.
+
+**Caffeinate** closes Ouroshell's native idle timers, wakes displays and
+acquires a logind `idle` block inhibitor over D-Bus for `IdleAction`.
+**Decaffeinate** closes the inhibitor FD and creates fresh native idle timers.
+It does **not** disable manual locking, lock-before-suspend, lid-close suspend,
+or an explicit suspend request. Other applications' inhibitors remain in force.
+Logind idle inhibitors are system-wide, so this can affect other sessions too.
+The launcher changes its label only after acquisition succeeds; failures stay
+visible. Closing the launcher retains the inhibitor. Reloading/stopping the
+shell or losing logind releases it and resets the toggle; it is not persisted.
+
+The user service manager must have the session's `WAYLAND_DISPLAY` environment
+(import it during compositor startup, before starting the service). The
+compositor must advertise `ext-idle-notify-v1`, `ext-session-lock-v1`, and
+`wlr-output-power-management-unstable-v1`. Do not run a second idle manager in
+parallel. Manually running Ouroshell uses the same policy as the user service.
+
+This is not an audited production locker. Disposable protocol/PAM fixtures
+cannot validate physical DPMS, lid policy, actual suspend/resume, the deployed
+PAM stack or trusted recovery. Validate those on the target desktop before
+enabling automatic locking or depending on lock-before-suspend.
 
 ## MCP discovery
 
@@ -204,6 +285,8 @@ Run the Lua behavior checks (requires a standalone Lua interpreter):
 ```sh
 lua tests/bar.lua
 lua tests/clock.lua
+lua tests/idle.lua
+lua tests/lock.lua
 lua tests/launcher.lua
 lua tests/appearance.lua
 lua tests/battery.lua
@@ -361,6 +444,27 @@ defaults and fixed system requests, resizing, the uniform overlay tint, and the
 uncovered bar. Sway verifies the no-blur fallback; real blur needs a compositor
 advertising `ext-background-effect-v1`.
 
+The native launcher test also uses a private logind fixture with real D-Bus FD
+passing to verify Caffeinate/Decaffeinate, denied requests, inhibitor retention
+after dismissal, and release on reload. It never inhibits the host or suspends
+it. Lua tests cover logind owner loss and in-flight stale replies. Physical
+lid switches, PAM authentication, DPMS, and actual suspend need desktop testing.
+
+The native session integration test requires the matching Ourokit source and
+binary. It uses a private wire compositor, test-only PAM library, and private
+logind service; it never authenticates against host PAM or suspends the host:
+
+```sh
+OUROKIT=/path/to/ourokit OUROCTL=/path/to/ourokit/zig-out/bin/ouroctl \
+  /usr/bin/python3 tests/native_session.py
+```
+
+It exercises withheld lock acknowledgement, output hotplug, keyboard-driven
+PAM prompts, denial/retry, sleep-delay ownership, resume, Caffeinate and
+Decaffeinate. Set `OUROSHELL_TEST_ARTIFACTS` to retain compositor-side captures
+of the real lock surfaces. Runtime development capture and synthetic input
+are disabled for secure credential fields.
+
 Check the systemd units with an installed `~/.local/bin/ouroctl` and an active
 graphical session:
 
@@ -376,10 +480,12 @@ not install units or restart the live shell.
 
 - `ouro.json` declares the application identity and entrypoint.
 - `src/application.lua` wires the services, owns the overlay signal, and declares windows.
-- `src/config.lua` holds desktop choices: icon theme and terminal command.
+- `src/config.lua` holds desktop choices: icon theme, terminal, idle timeouts and PAM service.
 - `src/dbus_support.lua` supervises D-Bus sessions: reconnect with backoff, errors, dictionaries.
 - `src/appearance.lua` follows the Settings portal's color scheme.
 - `src/clock.lua` keeps minute-aligned local time across suspend.
+- `src/idle.lua` owns native idle/output power policy and logind sleep/idle inhibitors.
+- `src/lock.lua` owns native lock/authentication state and the lock-screen UI.
 - `src/catalog.lua` loads the desktop-entry catalog shared by the launcher and notifications.
 - `src/bar.lua` renders workspace state and status.
 - `src/battery.lua` owns the UPower subscription and battery indicator.
