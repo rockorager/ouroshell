@@ -5,7 +5,7 @@ local f = ouro.tokens.foundation
 local M = {}
 
 -- Native ownership and its sole reader live at application scope. No password
--- ever enters this module: auth_input submits its native buffer directly to PAM.
+-- ever enters this module: the masked text_input sends its text directly to PAM.
 function M.new(services)
   local state = {
     phase = ouro.signal("unlocked"), username = ouro.signal(nil),
@@ -168,35 +168,27 @@ function M.content(state, time)
   }
   if prompt then
     local function current() return state.prompt() == prompt end
-    local function submitted()
-      if not current() then return end
-      state.prompt:set(nil)
-      state.message:set("Authenticating…")
-    end
-    children[#children + 1] = ouro.text { key = "prompt", text = prompt.text, size = f.typography_3,
-      foreground = theme.foreground, max_lines = 3 }
-    children[#children + 1] = ouro.auth_input {
+    -- PAM's prompt ("Password:") becomes the field's hint while it is empty.
+    local hint = tostring(prompt.text or ""):gsub("[%s:]+$", "")
+    -- Bound to the conversation, the field is masked and Enter sends its text
+    -- natively to PAM; Lua only hears the outcome.
+    children[#children + 1] = ouro.text_input {
       key = "credentials", conversation = prompt.conversation, prompt_id = prompt.id,
-      autofocus = true, width = "fill", on_submit = submitted,
-      on_cancel = function()
+      placeholder = hint ~= "" and hint or "Password", autofocus = true, width = "fill",
+      on_command = function(command)
         if not current() then return end
-        state.cancel_auth()
-        state.message:set("Authentication canceled. Try again.")
-      end,
-      on_error = function()
-        if current() then
+        if command == "submit" then
+          state.prompt:set(nil)
+          state.message:set("Authenticating…")
+        elseif command == "cancel" then
+          state.cancel_auth()
+          state.message:set("Authentication canceled. Try again.")
+        elseif command == "stale" then
           state.cancel_auth()
           state.message:set("Authentication is unavailable. Try again.")
         end
       end,
     }
-    children[#children + 1] = ouro.button { key = "unlock", label = "Unlock",
-      variant = "solid", tone = "accent", height = 44,
-      on_press = function()
-        if not current() then return end
-        local accepted = prompt.conversation:submit(prompt.id)
-        if accepted then submitted() end
-      end }
   elseif state.secured() and not state.authenticating() then
     children[#children + 1] = ouro.button { key = "retry", label = "Try again", on_press = state.authenticate }
   end

@@ -46,8 +46,9 @@ Ourokit [84e44a8](https://github.com/rockorager/ourokit/commit/84e44a8844a1)
 or later.
 Idle handling additionally requires the native session/authentication work:
 `ouro.session.idle`, `outputs`, `power`, `lock`, `ouro.lock_surface`,
-`ouro.auth.start`, `ouro.auth_input`, and `ouro.spawn_app`. These require
-Ourokit [e31fc85](https://github.com/rockorager/ourokit/commit/e31fc85709e1d7168b079f175540fe26f608e25a)
+`ouro.auth.start`, the masked `ouro.text_input` bound to a conversation, and
+`ouro.spawn_app`. These require
+Ourokit [4e69973b66cf](https://github.com/rockorager/ourokit/commit/4e69973b66cf29a389fd2a1d52edc9c206d933f4)
 or later, which the setup script pins. See Ourokit's `docs/session.md` for
 the native API contracts and security limits.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
@@ -199,11 +200,12 @@ delay with `InhibitDelayMaxSec`: a failed or slow lock cannot guarantee a secure
 resume once that deadline expires. Errors never authorize unlock.
 
 The lock screen covers all outputs, including hotplugged displays, with a
-centered credential card and clock. Ourokit's native `auth_input` always masks
-entry, including PAM echo-on prompts; credentials never pass through Lua.
-Only a successful PAM result for the current lock and authentication attempt
-can unlock. Enter or the Unlock button submits a response, not an unlock
-authorization. Escape in the credential field cancels authentication while
+centered credential card and clock. The password field is Ourokit's ordinary
+`text_input`, masked and bound to the PAM conversation: it shows PAM's prompt
+as a hint while empty and one dot per character, including for echo-on
+prompts, and sends the text to PAM natively; credentials never pass through
+Lua. Only a successful PAM result for the current lock and authentication
+attempt can unlock. Enter submits a response, not an unlock authorization. Escape in the credential field cancels authentication while
 keeping the session locked.
 Authentication is canceled before sleep and restarted on resume.
 

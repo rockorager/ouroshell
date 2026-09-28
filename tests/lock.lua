@@ -25,11 +25,6 @@ ouro.auth = { start = function(service, username)
   assert(service == "login" and username == "trusted-user")
   local auth = resource()
   function auth:cancel() self.canceled = true end
-  function auth:submit(id, ...)
-    assert(select("#", ...) == 0, "credentials must never be supplied by Lua")
-    self.submitted = id
-    return true
-  end
   conversations[#conversations + 1] = auth
   return auth
 end }
@@ -70,10 +65,11 @@ local auth = conversations[1]
 resume(auth_reader, { type = "prompt", id = 7, echo = false, text = "Password:" })
 local tree = window.content("DP-2")
 local entry = find(tree, "credentials")
-assert(entry.kind == "auth_input" and entry.conversation == auth and entry.prompt_id == 7)
+assert(entry.kind == "text_input" and entry.conversation == auth and entry.prompt_id == 7)
 assert(entry.text == nil and entry.on_change == nil and entry.default_text == nil)
-find(tree, "unlock").on_press()
-assert(auth.submitted == 7 and not state.prompt() and not owners[1].unlocks,
+assert(entry.placeholder == "Password" and entry.autofocus)
+entry.on_command("submit") -- the native field already sent its text to PAM
+assert(not state.prompt() and not owners[1].unlocks,
   "accepting a response for transport must not unlock")
 resume(auth_reader, { type = "result", success = false, reason = "Denied" })
 assert(state.secured() and auth.closed and not owners[1].unlocks)
@@ -83,14 +79,14 @@ assert(find(window.content(), "retry"))
 state.authenticate(); auth_reader = tasks[#tasks]; resume(auth_reader)
 resume(auth_reader, { type = "prompt", id = 12, echo = true, text = "Verification:" })
 local stale = find(window.content(), "credentials")
-assert(stale.kind == "auth_input", "echo-on PAM prompts must use native masked entry too")
-stale.on_cancel()
+assert(stale.kind == "text_input" and stale.conversation, "echo-on PAM prompts must use the masked field too")
+stale.on_command("cancel")
 assert(conversations[2].canceled and state.secured())
 resume(auth_reader, { type = "result", success = true })
 assert(not owners[1].unlocks)
 state.authenticate(); auth_reader = tasks[#tasks]; resume(auth_reader)
 resume(auth_reader, { type = "prompt", id = 15, text = "Password:" })
-stale.on_submit()
+stale.on_command("submit")
 assert(state.prompt().id == 15, "stale callbacks must not clear a new prompt")
 state.prepare_for_sleep(true)
 resume(auth_reader, { type = "result", success = true })
