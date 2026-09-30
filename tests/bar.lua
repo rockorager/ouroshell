@@ -179,12 +179,12 @@ local status = panel.content().children[1].children[3]
 assert(#status.children == 3 and status.children[1].key == "battery" and status.children[3].key == "clock")
 assert(status.children[1].children[2].text == "12%" and status.gap == ouro.tokens.foundation.spacing_2,
   "status gap must leave room for padding inside the bell button")
-connectivity = { icon = "network-wireless-signal-good-symbolic", label = "Wi-Fi" }
+connectivity = { icons = { "network-wireless-signal-good-symbolic" }, label = "Wi-Fi" }
 status = panel.content().children[1].children[3]
 assert(#status.children == 4 and status.children[1].key == "network" and status.children[2].key == "battery")
 assert(#status.children[1].children == 1 and status.children[4].key == "clock")
 assert(status.children[3].key == "notifications", "bell must be immediately left of the clock")
-assert(status.children[1].children[1].name == connectivity.icon)
+assert(status.children[1].children[1].name == connectivity.icons[1])
 connectivity = nil
 power = nil
 assert(#panel.content().children[1].children[3].children == 2, "missing battery left an empty indicator")

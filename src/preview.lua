@@ -26,7 +26,8 @@ local function workspace_content()
   return bar.content {
     workspaces = { available = true, workspaces = workspaces }, time = time, open_launcher = toggle,
     power = { percentage = 67, icon = "battery-good-charging-symbolic", charging = true, low = false },
-    connectivity = network.snapshot({ State = 70, Connectivity = 4, PrimaryConnectionType = "802-11-wireless" }, 78),
+    connectivity = network.snapshot({ { Name = "wlan0", Type = "wlan", OperationalState = "routable" } },
+      { wlan0 = { name = "Preview Wi-Fi", level = 0 } }),
   }
 end
 

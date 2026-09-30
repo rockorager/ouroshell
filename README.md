@@ -22,13 +22,24 @@ icon and percentage turning red for UPower low-battery warnings. It updates
 on property signals, hides when absent or unavailable, and reconnects after
 service or bus loss. No polling command or subprocess bridge is used.
 
-The network indicator uses NetworkManager over `ouro.dbus`, following the
-primary connection and its Wi-Fi access point's signal strength. Ethernet and
-mobile connections have distinct icons; captive portals, limited connectivity,
-and offline states have explicit labels. Internet status comes from
-NetworkManager's connectivity checks, not Wi-Fi association alone. Property
-signals keep it current; it hides during service or bus loss and reconnects.
-This is a status indicator, not a network picker or connection manager.
+The network indicator uses systemd-networkd and iwd over `ouro.dbus`. It shows
+physical links with routable addresses, with separate Ethernet and Wi-Fi icons
+when both are connected, rather than guessing a primary route. VPN and virtual
+Ethernet interfaces do not replace physical-link status. All states are icon-only;
+the descriptive text remains in icon accessibility labels. Wi-Fi uses iwd
+signal-level callbacks updating the bars; diagnostics seed the level on connect
+and roam. Drivers without signal reporting retain a generic Wi-Fi icon.
+Connecting cycles through signal bars (Ethernet pulses), stopping when the
+state changes and respecting reduced motion. Disconnected Wi-Fi uses the ×
+badge, powered-off Wi-Fi the disabled symbol, and link-local-only connectivity
+an amber warning icon. This does not verify Internet access or detect captive
+portals. Property/object signals
+keep it current without polling or scanning. Each service reconnects independently;
+iwd loss removes Wi-Fi details, while networkd loss hides the indicator.
+This is a status indicator, not a network picker or connection manager. Use
+`iwctl` or an iwd-compatible GUI to join networks. Let networkd own DHCP and
+systemd-resolved own DNS; do not enable iwd's built-in IP configuration or run
+NetworkManager/ConnMan on the same interfaces.
 
 ## Run
 
@@ -39,7 +50,10 @@ or later: `ouro.time`, `ouro.date`, `ouro.spawn`, edge-to-edge layer content,
 also requires layer-surface `background`/`background_effect`, styled boxes,
 text-input `placeholder`/`label`, `ouro.stack`, and image fill dimensions.
 The battery and network indicators require Ourokit's [D-Bus client](https://github.com/rockorager/ourokit/commit/7f7db21c7d05)
-and running UPower and NetworkManager services, respectively. D-Bus
+and running UPower and systemd-networkd/iwd services, respectively. The network
+indicator uses networkd's `Manager.Describe` JSON API and iwd's `SignalLevelAgent`;
+the shell user needs permission to call iwd on the system bus (typically membership
+in `network` or `wheel`, depending on the distribution). D-Bus
 subscriptions use `close_on_owner_change`, and the launcher uses
 `ensure_visible`, `focus_request`, and `ouro.color.with_alpha`. These require
 Ourokit [84e44a8](https://github.com/rockorager/ourokit/commit/84e44a8844a1)
@@ -49,8 +63,10 @@ Idle handling additionally requires the native session/authentication work:
 `ouro.auth.start`, the masked `ouro.text_input` bound to a conversation, and
 `ouro.spawn_app`. These require
 Ourokit [66b3e64b27fb](https://github.com/rockorager/ourokit/commit/66b3e64b27fb4f911671d8a8b6c1264d7cb52834)
-or later, which the setup script pins. See Ourokit's `docs/session.md` for
-the native API contracts and security limits.
+or later. The network animation additionally uses `ouro.animation`, Box opacity,
+and automatic reduced-motion support; setup pins
+[8539da1aa92b](https://github.com/rockorager/ourokit/commit/8539da1aa92bcc283df4f0f603bdf1904bf41f47).
+See Ourokit's `docs/session.md` for the native API contracts and security limits.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 
 ```sh
@@ -494,7 +510,7 @@ not install units or restart the live shell.
 - `src/catalog.lua` loads the desktop-entry catalog shared by the launcher and notifications.
 - `src/bar.lua` renders workspace state and status.
 - `src/battery.lua` owns the UPower subscription and battery indicator.
-- `src/network.lua` owns the NetworkManager subscription and connectivity indicator.
+- `src/network.lua` owns the networkd/iwd subscriptions and physical-link indicator.
 - `src/launcher.lua` owns launcher search, state, launch policy, and content.
 - `src/notifications.lua` implements the `org.freedesktop.Notifications` daemon.
 - `src/notification_center.lua` holds notification history and renders cards, popups and the center.

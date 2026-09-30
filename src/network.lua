@@ -4,103 +4,217 @@ local config = require("config")
 local support = require("dbus_support")
 local f = ouro.tokens.foundation
 local M = {}
-local service = "org.freedesktop.NetworkManager"
-local root = "/org/freedesktop/NetworkManager"
+local networkd = "org.freedesktop.network1"
+local iwd = "net.connman.iwd"
+local levels = { "excellent", "good", "ok", "weak", "none" }
+local thresholds = { -55, -67, -75, -85 }
 
-function M.snapshot(manager, strength)
-  local state = manager.State or 0
-  if manager.NetworkingEnabled == false or state == 10 then
-    return { icon = "network-offline-symbolic", label = "Network off", muted = true }
-  elseif state == 20 or state == 30 then
-    return { icon = "network-offline-symbolic", label = "Offline", muted = true }
-  elseif state == 40 then
-    local icon = manager.PrimaryConnectionType == "802-11-wireless" and "network-wireless-acquiring-symbolic"
-      or manager.PrimaryConnectionType == "802-3-ethernet" and "network-wired-acquiring-symbolic"
-      or "network-transmit-receive-symbolic"
-    return { icon = icon, label = "Connecting", muted = true }
-  elseif state ~= 50 and state ~= 60 and state ~= 70 then
-    return { icon = "network-offline-symbolic", label = "Unknown", muted = true }
-  end
-
-  local wifi = manager.PrimaryConnectionType == "802-11-wireless"
-  local label, icon = "Network", "network-transmit-receive-symbolic"
-  if wifi then
-    label, icon = "Wi-Fi", "network-wireless-symbolic"
-    if type(strength) == "number" and strength >= 0 and strength <= 100 then
-      local level = strength > 75 and "excellent" or strength > 50 and "good"
-        or strength > 25 and "ok" or strength > 0 and "weak" or "none"
-      icon = "network-wireless-signal-" .. level .. "-symbolic"
+-- Report connected physical links, not a guessed primary route. Routable means
+-- an address is configured; it does not prove Internet access or detect portals.
+function M.snapshot(links, stations)
+  if not links then return nil end
+  local connected, descriptions = {}, {}
+  local carrier, local_only, connecting, has_wifi
+  local wifi_off = true
+  for _, link in ipairs(links) do
+    local wireless = link.Type == "wlan"
+    if link.AdministrativeState ~= "linger" and
+      (wireless or link.Type == "wwan" or (link.Type == "ether" and not link.Kind)) then
+      local station = (stations or {})[link.Name]
+      local label = wireless and "Wi-Fi" or link.Type == "ether" and "Ethernet" or "Mobile"
+      local kind = wireless and "wireless" or link.Type == "ether" and "wired" or "cellular"
+      has_wifi = has_wifi or wireless
+      if wireless and (not station or station.powered ~= false) then wifi_off = false end
+      if link.OperationalState == "routable" then
+        local icon = "network-" .. kind .. "-symbolic"
+        local description = label .. " (" .. link.Name .. ")"
+        if wireless then
+          if station and station.name then description = description .. ": " .. station.name end
+          if station and levels[(station.level or -1) + 1] then
+            description = description .. ", " .. levels[station.level + 1] .. " signal"
+            icon = "network-wireless-signal-" .. levels[station.level + 1] .. "-symbolic"
+          end
+        end
+        connected[label] = connected[label] or icon
+        descriptions[#descriptions + 1] = description
+      end
+      if link.CarrierState == "carrier" then carrier = carrier or kind end
+      if link.CarrierState == "carrier" and link.AddressState == "degraded" then local_only = local_only or kind end
+      if link.CarrierState == "carrier" and link.AdministrativeState == "configuring" then connecting = kind end
+      if station and (station.state == "connecting" or station.state == "roaming") then connecting = kind end
     end
-  elseif manager.PrimaryConnectionType == "802-3-ethernet" then
-    label, icon = "Ethernet", "network-wired-symbolic"
-  elseif manager.PrimaryConnectionType == "gsm" or manager.PrimaryConnectionType == "cdma" then
-    label, icon = "Mobile", "network-cellular-symbolic"
   end
-
-  local connectivity = manager.Connectivity or 0
-  if connectivity == 2 then
-    return { icon = wifi and "network-wireless-no-route-symbolic" or "network-wired-no-route-symbolic",
-      label = "Sign in", warning = true, description = label .. ": captive portal sign-in required" }
-  elseif state == 50 or state == 60 or connectivity == 1 or connectivity == 3 then
-    return { icon = wifi and "network-wireless-no-route-symbolic" or "network-wired-no-route-symbolic",
-      label = (state == 50 or connectivity == 1) and "No internet" or "Limited",
-      warning = true, description = label .. ": limited connectivity" }
+  local labels, icons = {}, {}
+  for _, label in ipairs({ "Ethernet", "Wi-Fi", "Mobile" }) do
+    if connected[label] then
+      labels[#labels + 1] = label
+      icons[#icons + 1] = connected[label]
+    end
   end
-  return { icon = icon, label = label,
-    description = label .. (wifi and strength and (", signal " .. strength .. "%") or "")
-      .. (connectivity == 4 and ": internet available" or ": internet access unverified") }
+  if #labels > 0 then
+    table.sort(descriptions)
+    return {
+      label = table.concat(labels, " + "), icons = icons,
+      description = table.concat(descriptions, "; ") .. "; internet access unverified",
+    }
+  elseif local_only and not connecting then
+    return { icons = { "network-" .. local_only .. "-no-route-symbolic" }, label = "Local only", warning = true,
+      description = "Only link-local addressing is available; internet access unverified" }
+  elseif carrier or connecting then
+    local kind = connecting or carrier
+    return { icons = { "network-" .. kind .. "-acquiring-symbolic" }, connecting = kind,
+      label = "Connecting", muted = true }
+  elseif has_wifi and wifi_off then
+    return { icons = { "network-wireless-disabled-symbolic" }, label = "Wi-Fi off", muted = true }
+  end
+  return { icons = { has_wifi and "network-wireless-offline-symbolic" or "network-wired-disconnected-symbolic" },
+    label = "Offline", muted = true }
 end
 
-function M.read(bus)
-  local watched = {}
-  local function get(path, interface)
-    watched[path] = true
-    return support.properties(support.need(bus:call {
-      destination = service, path = path, interface = "org.freedesktop.DBus.Properties",
-      member = "GetAll", signature = "s", args = { interface }, timeout_ms = 5000,
-    }).args[1])
-  end
-  local manager = get(root, service)
-  local strength
-  -- PrimaryConnection points at the underlying connection even with a VPN.
-  -- Do not scan or choose another adapter when Ethernet is the primary route.
-  if (manager.State or 0) >= 50 and manager.PrimaryConnectionType == "802-11-wireless"
-    and manager.PrimaryConnection and manager.PrimaryConnection ~= "/" then
-    local active = get(manager.PrimaryConnection, service .. ".Connection.Active")
-    local device = active.Devices and active.Devices[1]
-    if device and device ~= "/" then
-      local wireless = get(device, service .. ".Device.Wireless")
-      if wireless.ActiveAccessPoint and wireless.ActiveAccessPoint ~= "/" then
-        strength = get(wireless.ActiveAccessPoint, service .. ".AccessPoint").Strength
-      end
+function M.read_links(bus)
+  local reply = support.need(bus:call {
+    destination = networkd, path = "/org/freedesktop/network1", interface = networkd .. ".Manager",
+    member = "Describe", signature = "", args = {}, timeout_ms = 5000,
+  })
+  return ouro.json.decode(reply.args[1]).Interfaces
+end
+
+function M.read_stations(bus)
+  local reply = support.need(bus:call {
+    destination = iwd, path = "/", interface = "org.freedesktop.DBus.ObjectManager",
+    member = "GetManagedObjects", signature = "", args = {}, timeout_ms = 5000,
+  })
+  local objects, stations = support.variants(reply.args[1]), {}
+  for path, interfaces in pairs(objects) do
+    interfaces = support.variants(interfaces)
+    if interfaces[iwd .. ".Device"] then
+      local device = support.properties(interfaces[iwd .. ".Device"])
+      local station = support.properties(interfaces[iwd .. ".Station"] or {})
+      local network = support.variants(objects[station.ConnectedNetwork] or {})[iwd .. ".Network"]
+      stations[device.Name] = {
+        path = path, state = station.State, network = station.ConnectedNetwork, ap = station.ConnectedAccessPoint,
+        name = network and support.properties(network).Name, powered = device.Powered,
+        available = interfaces[iwd .. ".Station"] ~= nil,
+      }
     end
   end
-  return M.snapshot(manager, strength), watched
+  return stations
 end
 
 function M.connect()
   local state = ouro.signal(nil)
+  local links, stations
+  local function publish() state:set(M.snapshot(links, stations)) end
   support.supervise { bus = "system",
     session = function(bus, healthy)
-      -- A NetworkManager restart closes the stream, ending the session and reconnecting.
       local changes <close> = support.need(bus:subscribe {
-        sender = service, interface = "org.freedesktop.DBus.Properties",
+        sender = networkd, interface = "org.freedesktop.DBus.Properties",
         member = "PropertiesChanged", close_on_owner_change = true,
       })
-      local watched
-      local function refresh()
-        local snapshot
-        snapshot, watched = M.read(bus)
-        state:set(snapshot)
-        healthy()
-      end
-      refresh() -- Subscribe before reading, including AP changes during a roam.
       while true do
-        local message = support.need(changes:next())
-        if watched[message.path] then refresh() end
+        links = M.read_links(bus)
+        publish()
+        healthy()
+        support.need(changes:next())
       end
     end,
-    down = function() state:set(nil) end,
+    down = function() links = nil; publish() end,
+  }
+  -- Separate sessions keep Ethernet status working when iwd is unavailable.
+  support.supervise { bus = "system",
+    session = function(bus, healthy)
+      local changes <close> = support.need(bus:subscribe { sender = iwd, close_on_owner_change = true })
+      local owner = support.need(bus:call {
+        destination = "org.freedesktop.DBus", path = "/org/freedesktop/DBus", interface = "org.freedesktop.DBus",
+        member = "GetNameOwner", signature = "s", args = { iwd }, timeout_ms = 5000,
+      }).args[1]
+      local registered = {}
+      local agent_path = "/dev/ouro/shell/SignalLevelAgent"
+      local agent <close> = support.need(bus:export {
+        path = agent_path, interface = iwd .. ".SignalLevelAgent",
+        methods = {
+          Changed = { input = "oy", output = "", handler = function(request)
+            if request.sender ~= owner then
+              return nil, { name = "org.freedesktop.DBus.Error.AccessDenied", message = "Not iwd" }
+            end
+            for _, station in pairs(stations or {}) do
+              if station.path == request.args[1] and (station.state == "connected" or station.state == "roaming") then
+                station.level = request.args[2]
+              end
+            end
+            publish()
+            return {}
+          end },
+          Release = { input = "o", output = "", handler = function(request)
+            if request.sender ~= owner then
+              return nil, { name = "org.freedesktop.DBus.Error.AccessDenied", message = "Not iwd" }
+            end
+            registered[request.args[1]] = nil
+            for _, station in pairs(stations or {}) do
+              if station.path == request.args[1] then station.level = nil end
+            end
+            publish()
+            return {}
+          end },
+        },
+      })
+      local function refresh()
+        local previous = stations or {}
+        stations = M.read_stations(bus)
+        for name, station in pairs(stations) do
+          local old = previous[name]
+          if old and old.path == station.path and old.network == station.network and old.ap == station.ap
+            and (station.state == "connected" or station.state == "roaming") then station.level = old.level end
+          -- Seed the level after a connection/roam even if RSSI stayed in the
+          -- same band and iwd did not send a Changed callback. No periodic scans.
+          if station.state == "connected" and station.level == nil then
+            local diagnostics = bus:call {
+              destination = iwd, path = station.path, interface = iwd .. ".StationDiagnostic",
+              member = "GetDiagnostics", signature = "", args = {}, timeout_ms = 5000,
+            }
+            local rssi = diagnostics and support.properties(diagnostics.args[1]).RSSI
+            if type(rssi) == "number" then
+              station.level = 0
+              for _, threshold in ipairs(thresholds) do
+                if rssi < threshold then station.level = station.level + 1 end
+              end
+            end
+          end
+        end
+        publish()
+        for _, station in pairs(stations) do
+          if station.available and not registered[station.path] then
+            -- Some drivers do not support RSSI events, or another client owns
+            -- the single agent slot. Connection status must still work.
+            registered[station.path] = bus:call {
+              destination = iwd, path = station.path, interface = iwd .. ".Station",
+              member = "RegisterSignalLevelAgent", signature = "oan",
+              args = { agent_path, thresholds }, timeout_ms = 5000,
+            } ~= nil
+          end
+        end
+        healthy()
+      end
+      refresh()
+      while true do
+        local message = support.need(changes:next())
+        local interface = message.args[1]
+        if message.member == "PropertiesChanged" and
+          (interface == iwd .. ".Device" or interface == iwd .. ".Station" or interface == iwd .. ".Network") then
+          refresh()
+        elseif message.member == "InterfacesAdded" or message.member == "InterfacesRemoved" then
+          for _, value in ipairs(message.args[2]) do
+            local added_interface = type(value) == "table" and value[1] or value
+            if added_interface == iwd .. ".Device" or added_interface == iwd .. ".Station" then
+              registered[message.args[1]] = nil
+              refresh()
+              break
+            end
+          end
+        end
+      end
+    end,
+    down = function() stations = nil; publish() end,
   }
   return state
 end
@@ -110,13 +224,26 @@ function M.content(state)
   local theme, palette = appearance.colors()
   local color = state.warning and palette.amber.step_11
     or state.muted and theme.muted_foreground or theme.sidebar_foreground
-  return ouro.row { key = "network", gap = f.spacing_1, cross_alignment = "center", children = {
-    ouro.xdg.icon { key = "icon", name = state.icon, theme = config.icon_theme,
-      width = f.spacing_4, height = f.spacing_4, tint = color, alt = state.description or state.label },
-    state.label ~= "Wi-Fi" and ouro.text {
-      key = "label", text = state.label, foreground = color, size = f.typography_3, max_lines = 1,
-    } or nil,
-  } }
+  local function icon(name, key)
+    return ouro.xdg.icon { key = key, name = name, theme = config.icon_theme,
+      width = f.spacing_4, height = f.spacing_4, tint = color, alt = state.description or state.label }
+  end
+  local children = {}
+  for index, name in ipairs(state.icons) do children[index] = icon(name, "icon" .. index) end
+  if state.connecting then
+    children = { ouro.animation { key = "connecting-" .. state.connecting, duration = 1200, loop = true,
+      render = function(progress)
+        -- Reduced motion supplies the terminal frame: keep the acquiring icon.
+        if state.connecting ~= "wired" and progress < 1 then
+          local frame = levels[5 - math.floor(progress * 5)]
+          return icon("network-" .. state.connecting .. "-signal-" .. frame .. "-symbolic", "icon")
+        end
+        return ouro.box { key = "pulse", opacity = 0.4 + 0.6 * math.abs(2 * progress - 1),
+          children = { icon(state.icons[1], "icon") } }
+      end,
+    } }
+  end
+  return ouro.row { key = "network", gap = f.spacing_1, cross_alignment = "center", children = children }
 end
 
 return M

@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 ourokit="$(dirname "$root")/ourokit"
-ourokit_revision=66b3e64b27fb4f911671d8a8b6c1264d7cb52834
+ourokit_revision=8539da1aa92bcc283df4f0f603bdf1904bf41f47
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$HOME/.cache/zig}"
 scratch="$(mktemp -d)"
