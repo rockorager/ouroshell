@@ -22,13 +22,21 @@ for level, name in ipairs({ "excellent", "good", "ok", "weak", "none" }) do
   assert(snapshot.label == "Wi-Fi" and snapshot.description:find("internet access unverified", 1, true))
   assert(snapshot.description:find("Test Wi-Fi", 1, true))
   local content = network.content(snapshot)
-  assert(#content.children == 1 and content.children[1].alt == snapshot.description)
+  assert(content.kind == "tooltip" and content.text == "Test Wi-Fi", "unknown RSSI must not invent a percentage")
+  assert(content.width == nil and content.gap == 16, "tooltip must fit its text below the bar, not overlap it")
+  assert(#content.children == 1 and content.children[1].children[1].alt == snapshot.description)
+end
+for _, case in ipairs({ { -110, 0 }, { -100, 0 }, { -99, 2 }, { -81, 32 }, { -74, 44 },
+  { -66, 57 }, { -48, 87 }, { -41, 99 }, { -40, 100 }, { -30, 100 } }) do
+  local snapshot = network.snapshot({ wifi }, { wlan0 = { name = "Bothe Consulting", rssi = case[1] } })
+  assert(network.content(snapshot).text == "Bothe Consulting (" .. case[2] .. "%)")
 end
 assert(network.snapshot({ wifi }).icons[1] == "network-wireless-symbolic", "unknown signal is not zero")
 local both = network.snapshot({ vpn, virtual, wifi, ethernet }, { wlan0 = { level = 0 } })
 assert(both.label == "Ethernet + Wi-Fi" and both.icons[1] == "network-wired-symbolic")
 assert(both.icons[2] == "network-wireless-signal-excellent-symbolic")
-local both_view = network.content(both)
+assert(network.content(both).text == "Ethernet; Wi-Fi")
+local both_view = network.content(both).children[1]
 assert(#both_view.children == 2 and both_view.children[1].kind == "icon" and both_view.children[2].kind == "icon")
 assert(not both.description:find("tailscale") and not both.description:find("veth"))
 assert(network.snapshot({ vpn, virtual }).label == "Offline", "virtual interfaces cannot imply a physical connection")
@@ -39,7 +47,8 @@ ethernet.AdministrativeState = nil
 wifi.OperationalState, wifi.AddressState = "carrier", "off"
 local acquiring = network.snapshot({ wifi })
 assert(acquiring.label == "Connecting")
-local animation = network.content(acquiring).children[1]
+assert(network.content(acquiring).text == "Connecting")
+local animation = network.content(acquiring).children[1].children[1]
 assert(animation.kind == "animation" and animation.loop and animation.duration == 1200)
 assert(animation.render(0).name == "network-wireless-signal-none-symbolic")
 assert(animation.render(0.199).name == "network-wireless-signal-none-symbolic")
@@ -48,20 +57,23 @@ assert(animation.render(0.999).name == "network-wireless-signal-excellent-symbol
 assert(animation.render(1).children[1].name == "network-wireless-acquiring-symbolic", "reduced motion keeps acquiring icon")
 local wired_animation = network.content(network.snapshot({ {
   Name = "eth0", Type = "ether", CarrierState = "carrier",
-} })).children[1]
+} })).children[1].children[1]
 assert(wired_animation.render(0.5).opacity == 0.4 and wired_animation.render(1).opacity == 1)
 assert(wired_animation.render(0).children[1].name == "network-wired-acquiring-symbolic")
 wifi.OperationalState, wifi.AddressState = "degraded", "degraded"
 local limited = network.snapshot({ wifi })
 assert(limited.label == "Local only" and limited.warning)
-assert(network.content(limited).children[1].tint == "light:warning")
+assert(network.content(limited).text == "Local only")
+assert(network.content(limited).children[1].children[1].tint == "light:warning")
 scheme = "dark"
-assert(network.content(limited).children[1].tint == "dark:warning")
+assert(network.content(limited).children[1].children[1].tint == "dark:warning")
 assert(limited.icons[1] == "network-wireless-no-route-symbolic")
 wifi.AdministrativeState = "configuring"
 assert(network.snapshot({ wifi }).connecting == "wireless", "link-local IPv6 during DHCP is still connecting")
 wifi.AdministrativeState = nil
-assert(network.content(network.snapshot({})).children[1].tint == "dark:muted")
+assert(network.content(network.snapshot({})).text == "Offline")
+assert(network.content(network.snapshot({})).width == nil, "short statuses need a content-sized tooltip")
+assert(network.content(network.snapshot({})).children[1].children[1].tint == "dark:muted")
 assert(network.content(nil) == nil and network.snapshot(nil) == nil)
 wifi.OperationalState, wifi.CarrierState, wifi.AddressState = "no-carrier", "no-carrier", "off"
 assert(network.snapshot({ wifi }).label == "Offline")
@@ -72,6 +84,7 @@ wifi.AddressState = "off"
 assert(network.snapshot({}).icons[1] == "network-wired-disconnected-symbolic")
 local disabled = network.snapshot({ wifi }, { wlan0 = { powered = false } })
 assert(disabled.label == "Wi-Fi off" and disabled.icons[1] == "network-wireless-disabled-symbolic")
+assert(network.content(disabled).text == "Wi-Fi off")
 assert(network.snapshot({ wifi, { Name = "wlan1", Type = "wlan" } }, { wlan0 = { powered = false } }).label == "Offline",
   "one disabled adapter does not imply all Wi-Fi is off")
 assert(network.snapshot({ wifi }, { wlan0 = { state = "connecting" } }).label == "Connecting")
@@ -81,6 +94,7 @@ local networkd, iwd = "org.freedesktop.network1", "net.connman.iwd"
 local current_links, connections, unavailable = { wifi, vpn }, {}, {}
 local station_state, ap, rssi, device_present = "connected", "/ap1", -54, true
 local registration_supported, diagnostic_supported = true, true
+local diagnostic_wait = false
 local owner = ":1.42"
 local function properties(values)
   local result = {}
@@ -142,6 +156,7 @@ ouro.dbus.connect = function(which)
     elseif request.member == "GetDiagnostics" then
       assert(request.destination == iwd and request.path == "/station" and request.interface == iwd .. ".StationDiagnostic")
       if not diagnostic_supported then return nil, { message = "NotSupported" } end
+      if diagnostic_wait then coroutine.yield() end
       return { args = { properties { RSSI = rssi } } }
     elseif request.member == "RegisterSignalLevelAgent" then
       assert(self.agent and request.path == "/station" and request.signature == "oan")
@@ -169,13 +184,21 @@ assert(state().label == "Wi-Fi" and state().icons[1] == "network-wireless-symbol
 resume(2)
 local iwbus = connections[iwd]
 assert(state().icons[1] == "network-wireless-signal-excellent-symbolic" and iwbus.registrations == 1)
+assert(network.content(state()).text == "Test Wi-Fi (77%)")
+rssi = -78
 assert(iwbus.agent.methods.Changed.handler { sender = owner, args = { "/station", 3 } })
 assert(state().icons[1] == "network-wireless-signal-weak-symbolic")
+assert(network.content(state()).text == "Test Wi-Fi (37%)", "signal callbacks must refresh RSSI, not convert the bucket")
 local reply, failure = iwbus.agent.methods.Changed.handler { sender = ":1.attacker", args = { "/station", 0 } }
 assert(reply == nil and failure.name == "org.freedesktop.DBus.Error.AccessDenied")
 assert(state().icons[1] == "network-wireless-signal-weak-symbolic")
 changed()
 assert(state().icons[1] == "network-wireless-signal-weak-symbolic" and iwbus.registrations == 1)
+assert(network.content(state()).text == "Test Wi-Fi (37%)", "property refresh must preserve RSSI")
+diagnostic_supported = false
+assert(iwbus.agent.methods.Changed.handler { sender = owner, args = { "/station", 2 } })
+assert(network.content(state()).text == "Test Wi-Fi", "failed diagnostics must clear the old percentage")
+diagnostic_supported = true
 -- Roam without a signal callback, then exercise each side of the dBm boundaries.
 for index, case in ipairs({ { -55, "excellent" }, { -56, "good" }, { -67, "good" },
   { -68, "ok" }, { -75, "ok" }, { -76, "weak" }, { -85, "weak" }, { -86, "none" } }) do
@@ -183,6 +206,7 @@ for index, case in ipairs({ { -55, "excellent" }, { -56, "good" }, { -67, "good"
   changed()
   assert(state().icons[1] == "network-wireless-signal-" .. case[2] .. "-symbolic")
 end
+assert(network.content(state()).text == "Test Wi-Fi (24%)", "roam must refresh RSSI")
 local reads = iwbus.reads
 resume(2, { member = "InterfacesAdded", args = { "/bss", { { iwd .. ".BasicServiceSet", {} } } } })
 assert(iwbus.reads == reads, "scan results should not refresh device state")
@@ -192,11 +216,22 @@ assert(state().icons[1] == "network-wireless-symbolic")
 device_present = true
 resume(2, { member = "InterfacesAdded", args = { "/station", { { iwd .. ".Station", {} } } } })
 assert(iwbus.registrations == 2, "a hotplugged device needs a new agent")
+diagnostic_wait = true
+local pending = coroutine.create(function()
+  iwbus.agent.methods.Changed.handler { sender = owner, args = { "/station", 0 } }
+end)
+assert(coroutine.resume(pending))
+assert(coroutine.status(pending) == "suspended")
 station_state = "disconnected"
 changed()
 assert(state().icons[1] == "network-wireless-symbolic", "disconnect must clear stale signal")
+assert(network.content(state()).text == "Wi-Fi", "disconnect must clear stale SSID and percentage")
+diagnostic_wait = false
+assert(coroutine.resume(pending))
+assert(network.content(state()).text == "Wi-Fi", "in-flight diagnostics must not restore disconnected signal")
 assert(iwbus.agent.methods.Changed.handler { sender = owner, args = { "/station", 0 } })
 assert(state().icons[1] == "network-wireless-symbolic", "late callback must not revive disconnected signal")
+assert(network.content(state()).text == "Wi-Fi")
 current_links = { ethernet }
 resume(1, { args = {} })
 assert(state().label == "Ethernet")
@@ -213,6 +248,7 @@ assert(connections[iwd] ~= iwbus and state().label == "Ethernet")
 current_links = { wifi }
 resume(1, { args = {} })
 assert(state().icons[1] == "network-wireless-symbolic", "unsupported signal APIs must not hide Wi-Fi")
+assert(network.content(state()).text == "Test Wi-Fi")
 local ndbus = connections[networkd]
 resume(1, "owner-changed")
 assert(ndbus.closed and ndbus.stream.closed and state() == nil)

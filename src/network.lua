@@ -13,7 +13,7 @@ local thresholds = { -55, -67, -75, -85 }
 -- an address is configured; it does not prove Internet access or detect portals.
 function M.snapshot(links, stations)
   if not links then return nil end
-  local connected, descriptions = {}, {}
+  local connected, descriptions, tooltips = {}, {}, {}
   local carrier, local_only, connecting, has_wifi
   local wifi_off = true
   for _, link in ipairs(links) do
@@ -28,8 +28,15 @@ function M.snapshot(links, stations)
       if link.OperationalState == "routable" then
         local icon = "network-" .. kind .. "-symbolic"
         local description = label .. " (" .. link.Name .. ")"
+        local tooltip = label
         if wireless then
           if station and station.name then description = description .. ": " .. station.name end
+          tooltip = station and station.name or label
+          if station and station.rssi then
+            -- Match NetworkManager's dBm quality scale: -100 = 0%, -40 = 100%.
+            local rssi = math.max(-100, math.min(-40, station.rssi))
+            tooltip = tooltip .. " (" .. (100 - math.floor(100 * (-40 - rssi) / 60)) .. "%)"
+          end
           if station and levels[(station.level or -1) + 1] then
             description = description .. ", " .. levels[station.level + 1] .. " signal"
             icon = "network-wireless-signal-" .. levels[station.level + 1] .. "-symbolic"
@@ -37,6 +44,7 @@ function M.snapshot(links, stations)
         end
         connected[label] = connected[label] or icon
         descriptions[#descriptions + 1] = description
+        tooltips[#tooltips + 1] = tooltip
       end
       if link.CarrierState == "carrier" then carrier = carrier or kind end
       if link.CarrierState == "carrier" and link.AddressState == "degraded" then local_only = local_only or kind end
@@ -53,9 +61,11 @@ function M.snapshot(links, stations)
   end
   if #labels > 0 then
     table.sort(descriptions)
+    table.sort(tooltips)
     return {
       label = table.concat(labels, " + "), icons = icons,
       description = table.concat(descriptions, "; ") .. "; internet access unverified",
+      tooltip = table.concat(tooltips, "; "),
     }
   elseif local_only and not connecting then
     return { icons = { "network-" .. local_only .. "-no-route-symbolic" }, label = "Local only", warning = true,
@@ -130,6 +140,14 @@ function M.connect()
       }).args[1]
       local registered = {}
       local agent_path = "/dev/ouro/shell/SignalLevelAgent"
+      local function read_rssi(station)
+        local diagnostics = bus:call {
+          destination = iwd, path = station.path, interface = iwd .. ".StationDiagnostic",
+          member = "GetDiagnostics", signature = "", args = {}, timeout_ms = 5000,
+        }
+        local rssi = diagnostics and support.properties(diagnostics.args[1]).RSSI
+        station.rssi = type(rssi) == "number" and rssi or nil
+      end
       local agent <close> = support.need(bus:export {
         path = agent_path, interface = iwd .. ".SignalLevelAgent",
         methods = {
@@ -140,6 +158,7 @@ function M.connect()
             for _, station in pairs(stations or {}) do
               if station.path == request.args[1] and (station.state == "connected" or station.state == "roaming") then
                 station.level = request.args[2]
+                read_rssi(station)
               end
             end
             publish()
@@ -151,7 +170,7 @@ function M.connect()
             end
             registered[request.args[1]] = nil
             for _, station in pairs(stations or {}) do
-              if station.path == request.args[1] then station.level = nil end
+              if station.path == request.args[1] then station.level, station.rssi = nil, nil end
             end
             publish()
             return {}
@@ -164,19 +183,17 @@ function M.connect()
         for name, station in pairs(stations) do
           local old = previous[name]
           if old and old.path == station.path and old.network == station.network and old.ap == station.ap
-            and (station.state == "connected" or station.state == "roaming") then station.level = old.level end
+            and (station.state == "connected" or station.state == "roaming") then
+            station.level, station.rssi = old.level, old.rssi
+          end
           -- Seed the level after a connection/roam even if RSSI stayed in the
           -- same band and iwd did not send a Changed callback. No periodic scans.
           if station.state == "connected" and station.level == nil then
-            local diagnostics = bus:call {
-              destination = iwd, path = station.path, interface = iwd .. ".StationDiagnostic",
-              member = "GetDiagnostics", signature = "", args = {}, timeout_ms = 5000,
-            }
-            local rssi = diagnostics and support.properties(diagnostics.args[1]).RSSI
-            if type(rssi) == "number" then
+            read_rssi(station)
+            if station.rssi then
               station.level = 0
               for _, threshold in ipairs(thresholds) do
-                if rssi < threshold then station.level = station.level + 1 end
+                if station.rssi < threshold then station.level = station.level + 1 end
               end
             end
           end
@@ -243,7 +260,11 @@ function M.content(state)
       end,
     } }
   end
-  return ouro.row { key = "network", gap = f.spacing_1, cross_alignment = "center", children = children }
+  return ouro.tooltip { key = "network", text = state.tooltip or state.label,
+    -- The anchor is the 16px icon, centered within the 40px bar.
+    gap = 16, children = {
+      ouro.row { key = "icons", gap = f.spacing_1, cross_alignment = "center", children = children },
+    } }
 end
 
 return M

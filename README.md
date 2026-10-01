@@ -26,9 +26,12 @@ The network indicator uses systemd-networkd and iwd over `ouro.dbus`. It shows
 physical links with routable addresses, with separate Ethernet and Wi-Fi icons
 when both are connected, rather than guessing a primary route. VPN and virtual
 Ethernet interfaces do not replace physical-link status. All states are icon-only;
-the descriptive text remains in icon accessibility labels. Wi-Fi uses iwd
-signal-level callbacks updating the bars; diagnostics seed the level on connect
-and roam. Drivers without signal reporting retain a generic Wi-Fi icon.
+hovering the indicator shows the Wi-Fi network name and signal percentage, such
+as `Bothe Consulting (87%)`, in a native tooltip below the bar. Detailed status
+remains in icon accessibility labels. Wi-Fi uses iwd signal-level callbacks
+updating the bars; diagnostics read RSSI on connect, roam, and signal-level
+changes. The percentage uses NetworkManager's −100…−40 dBm quality scale and is
+omitted when RSSI is unavailable. Drivers without signal reporting retain a generic Wi-Fi icon.
 Connecting cycles through signal bars (Ethernet pulses), stopping when the
 state changes and respecting reduced motion. Disconnected Wi-Fi uses the ×
 badge, powered-off Wi-Fi the disabled symbol, and link-local-only connectivity
@@ -64,8 +67,10 @@ Idle handling additionally requires the native session/authentication work:
 `ouro.spawn_app`. These require
 Ourokit [66b3e64b27fb](https://github.com/rockorager/ourokit/commit/66b3e64b27fb4f911671d8a8b6c1264d7cb52834)
 or later. The network animation additionally uses `ouro.animation`, Box opacity,
-and automatic reduced-motion support; setup pins
-[8539da1aa92b](https://github.com/rockorager/ourokit/commit/8539da1aa92bcc283df4f0f603bdf1904bf41f47).
+and automatic reduced-motion support. Its hover description uses `ouro.tooltip`;
+setup pins the required Ourokit
+[60f586c63395](https://github.com/rockorager/ourokit/commit/60f586c633954b56f9e79f5f6c43222597e7f877)
+with content-sized native surfaces and matching light/dark colors.
 See Ourokit's `docs/session.md` for the native API contracts and security limits.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 

@@ -27,7 +27,7 @@ local function workspace_content()
     workspaces = { available = true, workspaces = workspaces }, time = time, open_launcher = toggle,
     power = { percentage = 67, icon = "battery-good-charging-symbolic", charging = true, low = false },
     connectivity = network.snapshot({ { Name = "wlan0", Type = "wlan", OperationalState = "routable" } },
-      { wlan0 = { name = "Preview Wi-Fi", level = 0 } }),
+      { wlan0 = { name = "Preview Wi-Fi", level = 0, rssi = -48 } }),
   }
 end
 
