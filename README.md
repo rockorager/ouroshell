@@ -302,11 +302,14 @@ status/reload or desktop activation.
 
 ## Check and preview
 
-New Amp orbs run `.agents/setup` to install Zig 0.16.0, Rust 1.94.0, Lua,
-and the native build/headless-test packages. Setup clones a pinned Ourokit
-revision into `../ourokit`, builds its software renderer, and runs the Lua
-checks. It reuses dependency caches and refuses to overwrite an existing
-sibling checkout with different or uncommitted work. No services start at boot.
+New Amp orbs run `.agents/setup` to install Lua, the headless-test packages,
+and [mise](https://mise.jdx.dev). mise installs the prebuilt x86_64 Linux
+`ouroctl` that Ourokit's release workflow publishes for the commit pinned in
+`mise.toml`. Setup clones that revision into `../ourokit` (the native session
+test uses its sources), links the prebuilt binary to `zig-out/bin/ouroctl`, and
+runs the Lua checks. It refuses to overwrite an existing sibling checkout with
+different or uncommitted work. No services start at boot. To bump Ourokit,
+change the commit in `mise.toml`; that commit needs a `commit-<sha>` release.
 Run `.agents/setup` from the repository root to repeat setup manually; in an orb,
 use `/usr/bin/python3 tests/native_launcher.py` for the native tests so Python
 can find the system-installed Pillow package.

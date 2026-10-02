@@ -3,17 +3,18 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 ourokit="$(dirname "$root")/ourokit"
-ourokit_revision=60f586c633954b56f9e79f5f6c43222597e7f877
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$HOME/.cache/zig}"
-scratch="$(mktemp -d)"
-trap 'rm -rf "$scratch"' EXIT
+# mise.toml pins the prebuilt ouroctl; the sibling checkout must match it.
+ourokit_revision="$(sed -n 's/.*"commit-\([0-9a-f]\{40\}\)".*/\1/p' "$root/mise.toml")"
+[[ -n "$ourokit_revision" ]] || { echo 'mise.toml does not pin an Ourokit commit' >&2; exit 1; }
+mise_version=v2026.9.18
+export PATH="$HOME/.local/bin:$PATH"
 SECONDS=0
 
-echo 'Installing missing native build and headless-test packages'
-packages=(build-essential pkg-config curl ca-certificates git xz-utils python3
-  python3-pil python3-gi gir1.2-glib-2.0 dbus-daemon lua5.4 sway grim wtype adwaita-icon-theme libfontconfig1-dev
-  libfreetype-dev libxkbcommon-dev libvulkan-dev glslc)
+echo 'Installing missing runtime and headless-test packages'
+# build-essential compiles Ourokit's PAM test fixture in tests/native_session.py.
+packages=(build-essential curl ca-certificates git python3
+  python3-pil python3-gi gir1.2-glib-2.0 dbus-daemon lua5.4 sway grim wtype adwaita-icon-theme
+  libfontconfig1 libfreetype6 libxkbcommon0)
 missing=()
 for package in "${packages[@]}"; do
   if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || :)" != 'install ok installed' ]]; then
@@ -25,34 +26,28 @@ if ((${#missing[@]})); then
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
 fi
 
-echo 'Preparing Zig 0.16.0 and Rust 1.94.0'
-mkdir -p "$HOME/.local/bin" "$HOME/.local/opt" "$ZIG_GLOBAL_CACHE_DIR/tmp"
-if ! command -v zig >/dev/null || [[ "$(zig version)" != 0.16.0 ]]; then
-  [[ "$(uname -m)" == x86_64 ]] || { echo 'This setup requires an x86_64 orb' >&2; exit 1; }
-  curl --fail --location --retry 3 --max-time 180 \
-    https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o "$scratch/zig.tar.xz"
-  echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  $scratch/zig.tar.xz" | sha256sum --check
-  tar -xJf "$scratch/zig.tar.xz" -C "$HOME/.local/opt"
-  ln -sfn "$HOME/.local/opt/zig-x86_64-linux-0.16.0/zig" "$HOME/.local/bin/zig"
+echo "Installing mise $mise_version and the prebuilt ouroctl"
+[[ "$(uname -m)" == x86_64 ]] || { echo 'Ourokit publishes ouroctl for x86_64 Linux only' >&2; exit 1; }
+if ! command -v mise >/dev/null || [[ "v$(mise --version | awk '{print $1}')" != "$mise_version" ]]; then
+  curl --fail --silent --show-error --location --retry 3 --max-time 180 https://mise.run |
+    MISE_VERSION="$mise_version" MISE_INSTALL_PATH="$HOME/.local/bin/mise" sh
 fi
-if [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
-  curl --fail --location --retry 3 --max-time 180 https://sh.rustup.rs -o "$scratch/rustup.sh"
-  sh "$scratch/rustup.sh" -y --profile minimal --default-toolchain 1.94.0 --no-modify-path
-fi
-if ! rustup toolchain list | grep -q '^1\.94\.0-'; then
-  rustup toolchain install 1.94.0 --profile minimal
-fi
+mise trust --quiet "$root/mise.toml"
+(cd "$root" && mise install --yes)
+ouroctl="$(cd "$root" && mise which ouroctl)"
 
 # Amp and supervised services start in separate non-interactive login shells.
 if ! grep -Fqx '# Ouroshell orb toolchain' "$HOME/.bash_profile" 2>/dev/null; then
   cat >> "$HOME/.bash_profile" <<'PROFILE'
 
 # Ouroshell orb toolchain
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 PROFILE
 fi
 
 echo 'Preparing the pinned sibling Ourokit checkout'
+# Tests use its session peer and PAM fixture sources and expect the binary at
+# zig-out/bin/ouroctl (ignored by Ourokit's git), so link the prebuilt one there.
 if [[ ! -e "$ourokit" ]]; then
   git clone --quiet --no-checkout https://github.com/rockorager/ourokit.git "$ourokit"
   git -C "$ourokit" checkout --quiet --detach "$ourokit_revision"
@@ -61,34 +56,10 @@ elif [[ "$(git -C "$ourokit" rev-parse HEAD)" != "$ourokit_revision" ]] ||
   echo "Preserving existing work in $ourokit; setup needs a clean checkout at $ourokit_revision" >&2
   exit 1
 fi
-rustup override set --path "$ourokit" 1.94.0
+mkdir -p "$ourokit/zig-out/bin"
+ln -sfn "$ouroctl" "$ourokit/zig-out/bin/ouroctl"
+"$ourokit/zig-out/bin/ouroctl" --help >/dev/null
 
-echo 'Caching the pinned Zig dependencies'
-# Zig's DNS parser rejects some orb resolv.conf files. Download through curl,
-# then let zig fetch validate content hashes and populate its standard cache.
-# The pinned manifest's dependencies are URL/hash pairs with no transitive deps.
-/usr/bin/python3 - "$ourokit/build.zig.zon" "$scratch" <<'PY'
-import os
-from pathlib import Path
-import re
-import subprocess
-import sys
-from urllib.parse import urlparse
-
-manifest, scratch = map(Path, sys.argv[1:])
-cache = Path(os.environ['ZIG_GLOBAL_CACHE_DIR']) / 'p'
-for url, digest in re.findall(r'\.url\s*=\s*"([^"]+)"\s*,\s*\.hash\s*=\s*"([^"]+)"', manifest.read_text()):
-    if (cache / (digest + '.tar.gz')).exists():
-        continue
-    archive = scratch / Path(urlparse(url).path).name
-    subprocess.run(['curl', '--fail', '--location', '--retry', '3', '--max-time', '180', url, '-o', str(archive)], check=True)
-    actual = subprocess.check_output(['zig', 'fetch', str(archive)], cwd=manifest.parent, text=True).strip()
-    if actual != digest:
-        raise SystemExit(f'Hash mismatch for {url}: expected {digest}, got {actual}')
-PY
-
-echo "Building Ourokit (elapsed ${SECONDS}s)"
-(cd "$ourokit" && zig build -j1 -Doptimize=ReleaseFast -Dvulkan=false --summary all)
 echo 'Checking Ouroshell'
 lua "$root/tests/bar.lua"
 lua "$root/tests/launcher.lua"
