@@ -535,6 +535,19 @@ def main():
                     time.sleep(.1)
                 wait_for(lambda: len(launches) == 5, "clicking row background did not launch")
                 assert launches[4]["arguments"]["argv"][-2] == "fixture-app-4", launches
+                # A click outside the card dismisses the launcher (and its tint)
+                # without launching anything.
+                call(endpoint, "launcher.toggle")
+                capture("before-outside-click")
+                with Image.open(artifacts / "before-outside-click.png") as image:
+                    assert image.convert("RGB").getpixel((200, 600)) != (96, 128, 153), "launcher tint missing"
+                for command in ("cursor set 20 400", "cursor press button1", "cursor release button1"):
+                    subprocess.run(["swaymsg", "-s", str(sway_socket), f"seat seat0 {command}"], env=env, check=True, capture_output=True)
+                    time.sleep(.1)
+                capture("outside-click")
+                with Image.open(artifacts / "outside-click.png") as image:
+                    assert image.convert("RGB").getpixel((200, 600)) == (96, 128, 153), "outside click did not dismiss"
+                assert len(launches) == 5, "outside click launched something"
 
                 # The fake endpoint records requests; it never executes these.
                 for query, tool, argv in (("reboot", "run", ["systemctl", "reboot"]),

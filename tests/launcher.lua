@@ -122,6 +122,11 @@ assert(frame.background == "token:slate3" and frame.border == "token:slate6" and
 assert(frame.border_width == f.border_width_default)
 assert(frame.padding + frame.border_width == f.spacing_4 and frame.width == 592 and frame.height == 652,
   "frame must surround, not shrink, the original content area")
+assert(frame.on_pointer_down_outside.propagate == false, "an outside click must not reach the desktop")
+dismissed = false
+frame.on_pointer_down_outside.handler()
+assert(dismissed, "clicking outside the card must dismiss the launcher")
+dismissed = nil
 assert(find(tree, "results").flex == 1)
 for _, scope in ipairs({ "all", "apps", "system" }) do
   assert(find(tree, "scope-" .. scope).cross_alignment == "stretch",

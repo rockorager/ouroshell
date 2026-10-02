@@ -161,8 +161,8 @@ without it show the tint without blur.
 All combines applications and system actions. Its empty-query view shows the
 first three applications alphabetically; Apps browses the full catalog. Search
 matches application names, generic names, desktop IDs, and keywords. Up/Down
-change selection, Enter opens, and Escape goes back or dismisses. Scope buttons
-and rows are clickable. Reopening resets the query and any pending confirmation.
+change selection, Enter opens, and Escape goes back or dismisses. Clicking
+outside the card also dismisses it. Scope buttons and rows are clickable. Reopening resets the query and any pending confirmation.
 Application-provided menu items are not implemented or shown yet.
 
 System offers Lock screen, Session, Caffeinate (Decaffeinate while active),
@@ -229,8 +229,12 @@ centered credential card and clock. The password field is Ourokit's ordinary
 as a hint while empty and one dot per character, including for echo-on
 prompts, and sends the text to PAM natively; credentials never pass through
 Lua. Only a successful PAM result for the current lock and authentication
-attempt can unlock. Enter submits a response, not an unlock authorization. Escape in the credential field cancels authentication while
-keeping the session locked.
+attempt can unlock. Enter submits a response, not an unlock authorization. Escape in the credential field clears it, cancels that
+conversation and starts a fresh one while keeping the session locked. A denied
+response also starts a fresh conversation and keeps "Authentication failed"
+visible, so retrying never needs a pointer. A denial that arrives without any
+prompt (for example a locked account) does not loop; it shows a focused
+**Try again** button instead.
 Authentication is canceled before sleep and restarted on resume.
 
 The account comes from logind's session identity. `pam_service = "login"` in
@@ -260,7 +264,8 @@ It does **not** disable manual locking, lock-before-suspend, lid-close suspend,
 or an explicit suspend request. Other applications' inhibitors remain in force.
 Logind idle inhibitors are system-wide, so this can affect other sessions too.
 The launcher changes its label only after acquisition succeeds; failures stay
-visible. Closing the launcher retains the inhibitor. Reloading/stopping the
+visible. While caffeinated, the bar shows an alarm-clock indicator; clicking it
+decaffeinates. Closing the launcher retains the inhibitor. Reloading/stopping the
 shell or losing logind releases it and resets the toggle; it is not persisted.
 
 The user service manager must have the session's `WAYLAND_DISPLAY` environment
@@ -346,6 +351,11 @@ opens a right-edge notification center; `notifications.toggle` does the same
 through MCP. New notifications show a popup without taking keyboard focus.
 Do Not Disturb suppresses popups but keeps history. Both views follow the system
 theme and support dismissal, grouped history and app-provided actions.
+The bell shows how many retained notifications arrived since the center was
+last opened, including those that arrived behind the launcher or under Do Not
+Disturb; opening the center clears the count. Escape closes the center once it
+has keyboard focus (after a click inside it). A banner's expiry waits while the
+pointer is over it or its Options menu is open, then resumes after a 1.5 s grace.
 
 Popups use a single surface with one image/icon slot in the app header. The
 selection follows the notification specification: `image-data`, then

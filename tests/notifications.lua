@@ -58,7 +58,8 @@ ouro.popup = function(props)
   return handle
 end
 package.loaded.appearance = { connect = function() end, colors = function()
-  return { sidebar = "sidebar", card = "card", ring = "focus", accent_hover = "hover" }, { amber = { step_7 = "amber" } }
+  return { sidebar = "sidebar", card = "card", ring = "focus", accent_hover = "hover", foreground = "fg" },
+    { amber = { step_7 = "amber" } }
 end }
 
 local center = require("notification_center")
@@ -233,6 +234,24 @@ assert(not find(image_rows.render_item(1), "notification-image"), "group must no
 assert(find(image_rows.render_item(2), "notification-image").bytes == "site-two")
 assert(find(image_rows.render_item(3), "notification-image").bytes == "site-one",
   "each notification must retain its own image within an application group")
+local single = center.new()
+single.add { app = "Chat", title = "Only", body = "" }
+local closed_center = false
+local single_tree = center.content(single, { message = function() return nil end,
+  close = function() closed_center = true end })
+assert(find(single_tree, "subtitle").text == "This session · 1 notification")
+assert(not find(single_tree, "feedback") and find(single_tree, "feedback-space"),
+  "a healthy service must not show status text or an unlabeled empty node")
+assert(find(find(single_tree, "history").render_item(1), "group").foreground == "fg",
+  "group headings must not inherit the solid button's foreground")
+assert(single_tree.on_key.keys[1] == "Escape" and single_tree.on_key.propagate == false)
+single_tree.on_key.handler()
+assert(closed_center, "Escape must close the notification center")
+local held = {}
+local banner = center.popup({ id = 9, app = "Chat", title = "Hi", body = "", actions = {} },
+  { dismiss = function() end, activate = function() end, hold = function(value) held[#held + 1] = value end })
+banner.on_interaction_change(true); banner.on_interaction_change(false)
+assert(held[1] == true and held[2] == false, "hovering a banner must hold its expiry")
 local app = dofile("src/notification-preview.lua")
 local running = app.run()
 assert(coroutine.resume(tasks[1]))

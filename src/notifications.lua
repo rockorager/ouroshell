@@ -64,7 +64,20 @@ function M.new(options)
     local current = overlay()
     if showing("popup") and not store.quiet() then return live(current.id) end
   end
-  function state.toggle() overlay:set(not showing("notifications") and { kind = "notifications" } or nil) end
+  function state.toggle()
+    if showing("notifications") then overlay:set(nil); return end
+    store.mark_seen()
+    overlay:set({ kind = "notifications" })
+  end
+  -- The popup ID held open by pointer or keyboard focus, if any.
+  local held = nil
+  function state.hold(id, active)
+    if active then held = id elseif held == id then held = nil end
+  end
+  local function holding(id)
+    local current = overlay()
+    return held == id and showing("popup") and current.id == id and not store.quiet()
+  end
   function state.close_center() if showing("notifications") then overlay:set(nil) end end
 
   local function emit(member, signature, args, destination)
@@ -160,15 +173,22 @@ function M.new(options)
       store.remove(item.id)
       return limited("Notification IDs exhausted")
     end
+    if not replacement and not showing("notifications") then store.mark_unseen(item.id) end
     -- Popups never cover the launcher or the open notification center.
     if not store.quiet() and (overlay() == nil or showing("popup")) then
       overlay:set({ kind = "popup", id = item.id })
     end
-    state.message:set("Notifications are handled by Ouroshell.")
+    state.message:set(nil) -- A delivered notification supersedes stale feedback.
     if delay > 0 then
       connection.timers = connection.timers + 1
       ouro.spawn(function()
         ouro.sleep(delay)
+        -- Expiry waits while the banner is hovered or focused, then leaves a
+        -- short grace period. This only wakes while the pointer is inside.
+        while holding(item.id) do
+          repeat ouro.sleep(250) until not holding(item.id)
+          ouro.sleep(1500)
+        end
         connection.timers = connection.timers - 1
         if live(item.id) == item then finish(item.id, 1, true) end
       end)
@@ -209,7 +229,7 @@ function M.connect(state)
       local service <close> = support.need(M.export(bus, state))
       local name <close> = support.need(bus:own_name(interface))
       healthy()
-      state.message:set("Notifications are handled by Ouroshell.")
+      state.message:set(nil)
       while true do
         local event = support.need(owners:next())
         if event.args[1] == interface and event.args[3] == "" then error("Notification name lost") end
@@ -245,6 +265,7 @@ function M.window(state)
       content = function() return center.popup(item, {
         dismiss = function() state.dismiss(item.id) end,
         activate = function(key) state.activate(item, key) end,
+        hold = function(active) state.hold(item.id, active) end,
       }) end,
     }
   end

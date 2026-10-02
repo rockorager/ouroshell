@@ -51,11 +51,6 @@ return o.app {
       inputSchema = empty, outputSchema = empty,
       handler = function() o.spawn_app(state.toggle); return {} end,
     },
-    ["fixture.retry"] = {
-      description = "Retry authentication in this disposable test fixture.",
-      inputSchema = empty, outputSchema = empty,
-      handler = function() state.locker.authenticate(); return {} end,
-    },
   },
   run = function()
     require("appearance").connect()
@@ -133,7 +128,7 @@ class Peer(wire.Peer):
     def type(self, text, output=9):
         codes = dict(zip("abcdefghijklmnopqrstuvwxyz", (30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
                                                         49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44)))
-        codes.update({"-": 12, "\n": 28})
+        codes.update({"-": 12, "\n": 28, "\x1b": 1})
         with self.guard:
             surface = next(obj for obj, (kind, data) in self.objects.items()
                            if kind == "wl_surface" and data.get("output") == output and data.get("buffer"))
@@ -228,11 +223,16 @@ def main():
                 peer.type("wrong\n")
                 wait(lambda: "failed" in state()["message"], "denied PAM response did not remain locked")
                 assert peer.unlocks == 0
+                # A denial restarts authentication; no pointer is needed to retry.
+                wait(lambda: state()["prompt"] == "Identity", "denial did not restart authentication")
+                assert "failed" in state()["message"], "the new prompt must keep the denial visible"
                 capture("lock-denied")
+                # Escape clears the field and starts a fresh conversation.
+                peer.type("al\x1b")
+                wait(lambda: state()["prompt"] == "Identity" and "failed" not in state()["message"],
+                     "Escape did not restart authentication")
                 peer.idle(1800000, "idled")
                 wait(lambda: logind.suspends == 1, "acknowledged idle lock did not permit suspend")
-                call(endpoint, "fixture.retry")
-                wait(lambda: state()["prompt"] == "Identity", "retry failed")
                 prepare(True)
                 wait(lambda: not logind.held(delay), "sleep delay did not release after the acknowledged lock")
                 assert not state()["prompt"] and peer.unlocks == 0

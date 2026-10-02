@@ -26,7 +26,8 @@ function M.new(services)
     state.authenticating:set(false)
   end
 
-  function state.authenticate()
+  -- `notice` replaces the usual prompt guidance, for example after a denial.
+  function state.authenticate(notice)
     if not state.secured() or sleeping or state.authenticating() then return end
     local username = state.username()
     if not username then
@@ -36,10 +37,11 @@ function M.new(services)
     state.cancel_auth()
     local serial, lock = attempt, owner
     state.authenticating:set(true)
-    state.message:set("Authenticating…")
+    state.message:set(notice or "Authenticating…")
     ouro.spawn_app(function()
       -- A queued task may have been canceled before it started.
       if serial ~= attempt or sleeping or owner ~= lock then return end
+      local prompted, denied = false, false
       local ok = pcall(function()
         local auth, failure = ouro.auth.start(config.pam_service, username)
         if not auth then error(failure) end
@@ -50,8 +52,9 @@ function M.new(services)
           if serial ~= attempt or owner ~= lock or sleeping then return end
           if not event then error("Authentication conversation closed") end
           if event.type == "prompt" then
+            prompted = true
             state.prompt:set({ conversation = auth, id = event.id, text = event.text })
-            state.message:set("Enter your credentials to unlock.")
+            state.message:set(notice or "Enter your credentials to unlock.")
           elseif event.type == "info" or event.type == "error" then
             state.message:set(event.text)
           elseif event.type == "result" then
@@ -65,12 +68,19 @@ function M.new(services)
               lock:unlock()
               state.message:set("Unlocking…")
             else
+              denied = true
               state.message:set("Authentication failed. Try again.")
             end
             return
           end
         end
       end)
+      -- A denied response starts a fresh conversation so the user can simply
+      -- type again. A denial without any prompt (for example a locked account)
+      -- waits for an explicit retry instead of looping.
+      if ok and denied and prompted and serial == attempt and owner == lock then
+        state.authenticate("Authentication failed. Try again.")
+      end
       if not ok and serial == attempt and owner == lock then
         state.cancel_auth()
         if state.phase() == "unlocking" then
@@ -181,8 +191,9 @@ function M.content(state, time)
           state.prompt:set(nil)
           state.message:set("Authenticating…")
         elseif command == "cancel" then
+          -- Escape clears the field and starts over; it never needs a mouse.
           state.cancel_auth()
-          state.message:set("Authentication canceled. Try again.")
+          state.authenticate()
         elseif command == "stale" then
           state.cancel_auth()
           state.message:set("Authentication is unavailable. Try again.")
@@ -190,7 +201,9 @@ function M.content(state, time)
       end,
     }
   elseif state.secured() and not state.authenticating() then
-    children[#children + 1] = ouro.button { key = "retry", label = "Try again", on_press = state.authenticate }
+    -- Mounting requests focus, so Enter or Space retries without a pointer.
+    children[#children + 1] = ouro.button { key = "retry", label = "Try again", focus_request = 1,
+      on_press = function() state.authenticate() end }
   end
   children[#children + 1] = ouro.text { key = "status", text = state.message() or "",
     size = f.typography_2, alignment = "center", foreground = theme.muted_foreground, max_lines = 4 }

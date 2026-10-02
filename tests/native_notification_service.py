@@ -199,7 +199,8 @@ def main():
                                     groups[-1][1] = x
                         assert len(groups) == 2, f"{name}: expected visible bell and clock, got {groups}"
                         left, right = groups[0]
-                        assert 8 <= right - left <= 20 and groups[1][1] - groups[1][0] > 100, \
+                        # The bell may carry an unread count beside it.
+                        assert 8 <= right - left <= 40 and groups[1][1] - groups[1][0] > 100, \
                             f"{name}: bell must be left of clock"
                         assert groups[1][0] - right <= 22, f"{name}: bell adds extra padding before clock"
                     return 780 + (left + right) // 2
@@ -435,6 +436,14 @@ return o.app { id = "dev.ouro.activation-test", single_instance = true, run = fu
                     elif removal == "parent":
                         call(endpoint, "notifications.toggle")
                     else:
+                        # Expiry waits while the pointer holds the banner.
+                        time.sleep(2.6)
+                        pump()
+                        assert not any(member == "NotificationClosed" and args[0] == disappearing
+                                       for member, args in received), "a hovered banner expired"
+                        # Dismissing the open menu releases the hold; expiry
+                        # follows after a short grace period.
+                        click(400, 400)
                         signal("NotificationClosed", disappearing, "uint32 1")
                     wait_for(lambda: popup_geometry() is None, f"{removal} left a stale native menu")
                     pump()
@@ -523,7 +532,15 @@ return o.app { id = "dev.ouro.activation-test", single_instance = true, run = fu
                 click(865, 284)
                 pump()
                 assert not any(member == "ActionInvoked" and args[0] == expired for member, args in received), "expired notification invoked an action"
-                call(endpoint, "notifications.toggle")
+                # The click focused the center; Escape closes it.
+                def center_mapped():
+                    trace = (artifacts / "native.log").read_text()
+                    events = list(re.finditer(r"get_layer_surface\(new id zwlr_layer_surface_v1[@#](\d+),[^\n]*\"ouroshell-notifications\"", trace))
+                    return bool(events) and not re.search(
+                        rf"zwlr_layer_surface_v1[@#]{events[-1].group(1)}\.destroy\(", trace[events[-1].end():])
+                assert center_mapped()
+                keys("Escape")
+                wait_for(lambda: not center_mapped(), "Escape did not close the notification center")
 
                 # Raw image-data is padded deliberately: tightly packed test
                 # data would not catch a loader which ignores rowstride. The

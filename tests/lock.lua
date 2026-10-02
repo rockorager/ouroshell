@@ -71,28 +71,45 @@ assert(entry.placeholder == "Password" and entry.autofocus)
 entry.on_command("submit") -- the native field already sent its text to PAM
 assert(not state.prompt() and not owners[1].unlocks,
   "accepting a response for transport must not unlock")
+local count = #tasks
 resume(auth_reader, { type = "result", success = false, reason = "Denied" })
 assert(state.secured() and auth.closed and not owners[1].unlocks)
-assert(find(window.content(), "retry"))
-
--- Canceling a prompt retires its UI callbacks and rejects a late success.
-state.authenticate(); auth_reader = tasks[#tasks]; resume(auth_reader)
+-- A denied response restarts authentication so the user can type again.
+assert(#tasks == count + 1 and state.authenticating() and not find(window.content(), "retry"),
+  "a denial after a prompt must not require a pointer to retry")
+auth_reader = tasks[#tasks]; resume(auth_reader)
 resume(auth_reader, { type = "prompt", id = 12, echo = true, text = "Verification:" })
+assert(state.message() == "Authentication failed. Try again.", "the new prompt must keep the denial visible")
 local stale = find(window.content(), "credentials")
 assert(stale.kind == "text_input" and stale.conversation, "echo-on PAM prompts must use the masked field too")
+
+-- Escape retires the prompt's UI callbacks, rejects a late success, and
+-- starts a fresh conversation.
+count = #tasks
 stale.on_command("cancel")
 assert(conversations[2].canceled and state.secured())
+assert(#tasks == count + 1 and state.authenticating(), "Escape must restart authentication")
 resume(auth_reader, { type = "result", success = true })
 assert(not owners[1].unlocks)
-state.authenticate(); auth_reader = tasks[#tasks]; resume(auth_reader)
+auth_reader = tasks[#tasks]; resume(auth_reader)
 resume(auth_reader, { type = "prompt", id = 15, text = "Password:" })
 stale.on_command("submit")
 assert(state.prompt().id == 15, "stale callbacks must not clear a new prompt")
 state.prepare_for_sleep(true)
 resume(auth_reader, { type = "result", success = true })
 assert(not owners[1].unlocks and conversations[3].canceled)
+-- A denial without a prompt (for example a locked account) never loops; the
+-- focused retry button waits for an explicit request.
+state.prepare_for_sleep(false)
+auth_reader = tasks[#tasks]; resume(auth_reader)
+count = #tasks
+resume(auth_reader, { type = "result", success = false })
+assert(#tasks == count and not state.authenticating())
+local retry = find(window.content(), "retry")
+assert(retry and retry.focus_request == 1, "the retry button must take keyboard focus")
+state.prepare_for_sleep(true)
 state.authenticate()
-assert(#conversations == 3, "authentication must remain paused while suspending")
+assert(#conversations == 4, "authentication must remain paused while suspending")
 state.prepare_for_sleep(false)
 auth_reader = tasks[#tasks]; resume(auth_reader)
 resume(auth_reader, { type = "result", success = true })
@@ -107,7 +124,7 @@ state.request(); reader = tasks[#tasks]; resume(reader); resume(reader, "finishe
 assert(not state.visible() and #errors == 1)
 state.request(); reader = tasks[#tasks]; resume(reader); resume(reader, "failed")
 assert(state.phase() == "failed" and state.visible())
-local count = #tasks
+count = #tasks
 state.request(); state.authenticate()
 assert(#tasks == count and not owners[#owners].unlocks)
 assert(not find(lock.content(state, "time"), "retry"))

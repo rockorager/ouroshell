@@ -82,6 +82,11 @@ return ouro.app {
             workspaces = workspaces(), time = time(), output = output,
             open_launcher = toggle_launcher, power = power(), connectivity = connectivity(),
             open_notifications = toggle_notifications, quiet = notices.store.quiet(),
+            unread = notices.store.unread(), caffeinated = session.caffeinated(),
+            decaffeinate = function()
+              -- Idle timers belong to the application, not this button's scope.
+              ouro.spawn_app(function() if session.caffeinated() then session.toggle() end end)
+            end,
           }
         end,
     }

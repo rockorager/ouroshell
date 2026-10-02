@@ -194,4 +194,35 @@ assert(overlay() == nil, "activation must dismiss the popup")
 id = notify(nil, 0)[1]
 shell.dismiss(id)
 assert(shell.popup() == nil and service.window(shell) == nil, "dismissal must remove the popup")
+
+-- Arrivals are unread until history opens; replacements and removals adjust.
+local inbox = service.new()
+service.export(bus, inbox)
+local first = notify()[1]
+local second = notify()[1]
+assert(inbox.store.unread() == 2)
+notify(second)
+assert(inbox.store.unread() == 2, "a replacement is not a new unread notification")
+inbox.dismiss(first)
+assert(inbox.store.unread() == 1, "dismissed notifications stop counting")
+inbox.toggle()
+assert(inbox.store.unread() == 0, "opening history marks notifications seen")
+notify()
+assert(inbox.store.unread() == 0, "arrivals while history is open are seen")
+inbox.toggle()
+
+-- Hovering a banner holds its expiry until the pointer leaves, plus a grace.
+local function step(index)
+  local ok, delay = coroutine.resume(tasks[index].task)
+  assert(ok, delay)
+  return delay
+end
+local held = notify()[1]
+local timer = #tasks
+assert(tasks[timer].delay == 6000 and inbox.popup().id == held)
+inbox.hold(held, true)
+assert(step(timer) == 250 and step(timer) == 250 and not inbox.store.get(held).expired)
+inbox.hold(held, false)
+assert(step(timer) == 1500 and not inbox.store.get(held).expired)
+assert(step(timer) == nil and inbox.store.get(held).expired, "expiry must resume after the hover ends")
 print("PASS: notification IDs, replacement timers, closure reasons, actions, hints, DND, UTF-8, history and limits")

@@ -14,7 +14,8 @@ end
 -- stores a new table, so identity tells a caller whether its item is current.
 -- An expired item stays readable but can no longer be activated.
 function M.new()
-  local state = { items = ouro.signal({}), quiet = ouro.signal(false), collapsed = ouro.signal({}) }
+  local state = { items = ouro.signal({}), quiet = ouro.signal(false), collapsed = ouro.signal({}),
+    unseen = ouro.signal({}) }
   local next_id = 0
   function state.get(id)
     for _, item in ipairs(state.items()) do
@@ -51,6 +52,21 @@ function M.new()
     state.items:set(items)
   end
   function state.clear() state.items:set({}) end
+  -- IDs that arrived while history was closed; removed items stop counting.
+  function state.mark_unseen(id)
+    local unseen = {}
+    for key, value in pairs(state.unseen()) do unseen[key] = value end
+    unseen[id] = true
+    state.unseen:set(unseen)
+  end
+  function state.mark_seen() if next(state.unseen()) then state.unseen:set({}) end end
+  function state.unread()
+    local count, unseen = 0, state.unseen()
+    for _, item in ipairs(state.items()) do
+      if unseen[item.id] then count = count + 1 end
+    end
+    return count
+  end
   function state.toggle_group(app)
     local collapsed = {}
     for key, value in pairs(state.collapsed()) do collapsed[key] = value end
@@ -160,7 +176,7 @@ function M.content(state, callbacks)
           foreground = theme.muted_foreground }
         heading[#heading + 1] = icon("disclosure", row.collapsed and "pan-end-symbolic" or "pan-down-symbolic", theme.muted_foreground)
         content = ouro.button { key = "group", label = (row.collapsed and "Expand " or "Collapse ") .. group.app,
-          background = ouro.tokens.palette.transparent, hover = theme.accent_hover,
+          background = ouro.tokens.palette.transparent, foreground = theme.foreground, hover = theme.accent_hover,
           on_press = function() state.toggle_group(group.app) end,
           children = { ouro.row { key = "heading", gap = f.spacing_2, cross_alignment = "center", children = heading } },
         }
@@ -187,7 +203,7 @@ function M.content(state, callbacks)
         ouro.row { key = "header", cross_alignment = "center", gap = f.spacing_3, children = {
           ouro.column { key = "heading", flex = 1, gap = f.spacing_1, children = {
             ouro.text { key = "title", text = "Notifications", size = f.typography_5 },
-            ouro.text { key = "subtitle", text = "This session · " .. #state.items() .. " notifications",
+            ouro.text { key = "subtitle", text = "This session · " .. #state.items() .. (#state.items() == 1 and " notification" or " notifications"),
               foreground = theme.muted_foreground, size = f.typography_2 },
           } },
           icon_button("close", "Close notification center", "window-close-symbolic", callbacks.close),
@@ -217,11 +233,15 @@ function M.content(state, callbacks)
           ouro.button { key = "reset", label = "Reset preview", on_press = callbacks.reset },
     } }
   end
+  -- The space stays reserved; empty text nodes have no semantic label.
+  local feedback = callbacks.message()
   layout[#layout + 1] = ouro.box { key = "feedback-space", height = f.spacing_6, children = {
-          ouro.text { key = "feedback", text = callbacks.message(), foreground = theme.muted_foreground,
-            size = f.typography_1, max_lines = 2 },
+          feedback and feedback ~= "" and ouro.text { key = "feedback", text = feedback,
+            foreground = theme.muted_foreground, size = f.typography_1, max_lines = 2 } or nil,
   } }
   return ouro.box { key = "notification-center", width = "fill", height = "fill", surface = "sidebar",
+    on_key = { keys = { "Escape" }, states = { "pressed" }, propagate = false,
+      handler = function() callbacks.close() end },
     border_width = f.border_width_default, radius = f.radius_5, padding = f.spacing_4, children = {
       ouro.column { key = "layout", gap = f.spacing_4, cross_alignment = "stretch", children = layout },
     } }
@@ -339,7 +359,11 @@ local notification = ouro.stateful(function(props)
     end
     local interaction = #actions > 0 and function(value) active:set(value) end or nil
     if props.popup then
-      return popup(item, props, controls, interaction)
+      -- Pointer or focus within a banner holds its expiry.
+      return popup(item, props, controls, function(value)
+        if #actions > 0 then active:set(value) end
+        if props.hold then props.hold(value) end
+      end)
     end
     return card(item, props.dismiss, props.activate, controls, interaction)
   end
@@ -351,7 +375,7 @@ end
 
 function M.popup(item, callbacks)
   return notification { key = "popup-" .. item.id, item = item, popup = true,
-    dismiss = callbacks.dismiss, activate = callbacks.activate }
+    dismiss = callbacks.dismiss, activate = callbacks.activate, hold = callbacks.hold }
 end
 
 return M

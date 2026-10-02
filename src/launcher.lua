@@ -23,7 +23,7 @@ local lock = {
   keywords = { "lock" },
 }
 local session = {
-  id = "session", name = "Session…", kind = "system", icon = "system-shutdown-symbolic",
+  id = "session", name = "Session", kind = "system", icon = "system-shutdown-symbolic",
   description = "Log out, restart, or shut down", submenu = true,
 }
 local session_actions = {
@@ -94,7 +94,7 @@ function M.new(services)
   local catalog = services.catalog
   local state = {
     catalog = catalog,
-    idle = services.idle,
+    idle = services.idle, dismiss = services.dismiss,
     query = ouro.signal(""), selected = ouro.signal(1),
     scope = ouro.signal("all"), page = ouro.signal(nil), confirming = ouro.signal(nil),
     focus = ouro.signal(0),
@@ -132,7 +132,6 @@ function M.new(services)
         actions[#actions + 1] = {
           id = "color-scheme", name = dark and "Switch to light theme" or "Switch to dark theme", kind = "system",
           icon = dark and "weather-clear-symbolic" or "weather-clear-night-symbolic",
-          description = "Toggle the system color scheme between light and dark",
           keywords = { "theme", "toggle color scheme", "dark mode", "light mode", "appearance" },
           argv = { "prefer", "set", "color-scheme", dark and "light" or "dark" },
         }
@@ -397,6 +396,7 @@ function M.content(state, height, width)
     } },
     ouro.box { key = "position", width = "fill", height = "fill", padding = f.spacing_5, alignment = "center", children = {
       ouro.box { key = "palette", width = frame_width, height = frame_height,
+        on_pointer_down_outside = { propagate = false, handler = function() state.dismiss() end },
         padding = frame_padding - f.border_width_default, radius = f.radius_6,
         background = theme == ouro.tokens.dark and palette.slate.step_3 or theme.card,
         border = palette.slate.step_6, border_width = f.border_width_default, children = {

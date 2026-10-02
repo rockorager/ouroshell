@@ -31,13 +31,15 @@ end
 -- props.open_launcher, props.open_notifications: optional button handlers
 -- props.power, props.connectivity: optional battery and network snapshots
 -- props.quiet: whether Do Not Disturb is on
+-- props.unread: notifications that arrived since history was last opened
+-- props.caffeinated, props.decaffeinate: idle-inhibitor state and its release
 function M.content(props)
   local state, output = props.workspaces, props.output
   local theme, palette = appearance.colors()
   local colors = {
     foreground = theme.sidebar_foreground, muted = theme.muted_foreground,
     hover = theme.sidebar_accent, selected = theme.accent_selected,
-    selected_hover = palette.indigo.step_6, urgent = palette.red.step_11,
+    selected_hover = palette.indigo.step_6, urgent = palette.red.step_11, accent = theme.primary,
     transparent = ouro.tokens.palette.transparent,
   }
   local visible = {}
@@ -82,15 +84,36 @@ function M.content(props)
   end
 
   local status = {}
+  if props.caffeinated then
+    -- Automatic locking is off; keep that visible and one click from undone.
+    local description = "Caffeinated: automatic lock and sleep are paused. Click to resume."
+    status[#status + 1] = ouro.tooltip { key = "caffeine", text = description, gap = 16, children = {
+      ouro.button { key = "decaffeinate", label = description, padding_x = f.spacing_2,
+        background = colors.transparent, foreground = colors.foreground, hover = colors.hover,
+        on_press = props.decaffeinate, children = {
+          ouro.xdg.icon { key = "icon", name = "alarm-symbolic", theme = config.icon_theme,
+            tint = colors.foreground, width = f.spacing_4, height = f.spacing_4, alt = "" },
+        } },
+    } }
+  end
   if props.connectivity then status[#status + 1] = network.content(props.connectivity) end
   if props.power then status[#status + 1] = battery.content(props.power) end
   if props.open_notifications then
-    status[#status + 1] = ouro.button { key = "notifications", label = "Open notifications",
+    local unread = props.unread or 0
+    local bell = {
+      ouro.xdg.icon { key = "bell", name = props.quiet and "notifications-disabled-symbolic" or "preferences-system-notifications-symbolic",
+        theme = config.icon_theme, tint = colors.foreground, width = f.spacing_4, height = f.spacing_4 },
+    }
+    if unread > 0 then
+      bell[2] = ouro.text { key = "unread", text = unread > 99 and "99+" or tostring(unread),
+        size = f.typography_2, foreground = colors.accent, max_lines = 1 }
+    end
+    status[#status + 1] = ouro.button { key = "notifications",
+      label = unread > 0 and ("Open notifications, " .. unread .. " unread") or "Open notifications",
       padding_x = f.spacing_2,
       background = colors.transparent, foreground = colors.foreground, hover = colors.hover,
       on_press = props.open_notifications, children = {
-        ouro.xdg.icon { key = "bell", name = props.quiet and "notifications-disabled-symbolic" or "preferences-system-notifications-symbolic",
-          theme = config.icon_theme, tint = colors.foreground, width = f.spacing_4, height = f.spacing_4 },
+        ouro.row { key = "content", gap = f.spacing_1, cross_alignment = "center", children = bell },
       } }
   end
   status[#status + 1] = ouro.text { key = "clock", text = props.time, size = f.typography_3, max_lines = 1 }

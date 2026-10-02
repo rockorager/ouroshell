@@ -143,14 +143,32 @@ for _, quiet in ipairs({ false, true }) do
   assert(controls[1].padding_x == ouro.tokens.foundation.spacing_2,
     "bell hover and click area must include horizontal padding")
   assert(controls[1].foreground == ouro.tokens.dark.sidebar_foreground)
-  assert(controls[1].children[1].tint == ouro.tokens.dark.sidebar_foreground,
+  local bell = controls[1].children[1].children
+  assert(#bell == 1, "no unread count without unread notifications")
+  assert(bell[1].tint == ouro.tokens.dark.sidebar_foreground,
     "bell must match the normal status icon foreground")
-  assert(controls[1].children[1].theme == "Adwaita")
-  assert(controls[1].children[1].name == (quiet and "notifications-disabled-symbolic"
+  assert(bell[1].theme == "Adwaita")
+  assert(bell[1].name == (quiet and "notifications-disabled-symbolic"
     or "preferences-system-notifications-symbolic"))
   controls[1].on_press()
 end
 assert(opened, "bell must invoke the notification toggle")
+local unread = bar.content { workspaces = state, time = "t", open_notifications = function() end,
+  unread = 3 }.children[1].children[3].children[1]
+assert(unread.label == "Open notifications, 3 unread" and unread.children[1].children[2].text == "3",
+  "unread notifications must be counted on the bell")
+assert(bar.content { workspaces = state, time = "t", open_notifications = function() end,
+  unread = 120 }.children[1].children[3].children[1].children[1].children[2].text == "99+")
+
+-- Caffeine disables automatic locking, so it stays visible and reversible.
+local released = false
+local caffeine = bar.content { workspaces = state, time = "t", caffeinated = true,
+  decaffeinate = function() released = true end }.children[1].children[3].children
+assert(#caffeine == 2 and caffeine[1].key == "caffeine" and caffeine[1].kind == "tooltip")
+assert(caffeine[1].children[1].children[1].name == "alarm-symbolic")
+caffeine[1].children[1].on_press()
+assert(released, "the caffeine indicator must release the inhibitor")
+assert(#bar.content { workspaces = state, time = "t" }.children[1].children[3].children == 1)
 ouro.mcp = { call = function() return { result = {} } end }
 ouro.spawn = function(fn) assert(coroutine.resume(coroutine.create(fn))) end
 ouro.shell = { workspaces = { connect = function() return function() return state end end } }
@@ -160,8 +178,9 @@ require("network").connect = function() return function() return connectivity en
 require("notifications").connect = function() end
 require("clock").connect = function() return function() return time end end
 local locked = false
-require("idle").connect = function() return { caffeinated = ouro.signal(false), toggle = function() end,
-  locker = { visible = function() return locked end } } end
+local session = { caffeinated = ouro.signal(false), locker = { visible = function() return locked end } }
+function session.toggle() session.caffeinated:set(not session.caffeinated()) end
+require("idle").connect = function() return session end
 local app = dofile("src/application.lua")
 assert(app.theme == nil, "shell must inherit the host theme")
 local running = app.run()
@@ -188,9 +207,18 @@ assert(status.children[1].kind == "tooltip" and status.children[1].text == "Wi-F
 assert(status.children[1].children[1].children[1].name == connectivity.icons[1])
 connectivity = nil
 power = nil
+session.caffeinated:set(true)
+local indicator = panel.content().children[1].children[3].children[1]
+assert(indicator.key == "caffeine", "caffeinating must show a bar indicator")
+local app_tasks = {}
+ouro.spawn_app = function(fn) app_tasks[#app_tasks + 1] = fn end
+indicator.children[1].on_press()
+assert(#app_tasks == 1 and session.caffeinated(), "idle timers must be restarted at application scope")
+app_tasks[1]()
+assert(not session.caffeinated() and panel.content().children[1].children[3].children[1].key ~= "caffeine")
 assert(#panel.content().children[1].children[3].children == 2, "missing battery left an empty indicator")
 local bell = panel.content().children[1].children[3].children[1]
-assert(bell.key == "notifications" and bell.children[1].name == "preferences-system-notifications-symbolic")
+assert(bell.key == "notifications" and bell.children[1].children[1].name == "preferences-system-notifications-symbolic")
 bell.on_press()
 assert(running.windows()[2].id == "notifications")
 assert(app.actions["launcher.toggle"].inputSchema.type == "object")
