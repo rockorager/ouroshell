@@ -252,6 +252,13 @@ local banner = center.popup({ id = 9, app = "Chat", title = "Hi", body = "", act
   { dismiss = function() end, activate = function() end, hold = function(value) held[#held + 1] = value end })
 banner.on_interaction_change(true); banner.on_interaction_change(false)
 assert(held[1] == true and held[2] == false, "hovering a banner must hold its expiry")
+local clickable = { id = 10, app = "Chat", title = "Hi", body = "", default_action = true,
+  actions = { { key = "default", label = "Open" } } }
+for _, surface in ipairs({ center.popup(clickable, { dismiss = function() end, activate = function() end }),
+  center.card(clickable, function() end, function() end) }) do
+  assert(surface.kind == "button" and surface.foreground == "fg",
+    "clickable notifications must not inherit the solid button's white text")
+end
 local app = dofile("src/notification-preview.lua")
 local running = app.run()
 assert(coroutine.resume(tasks[1]))

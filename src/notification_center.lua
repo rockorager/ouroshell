@@ -121,7 +121,9 @@ local function notification_surface(item, key, surface, radius, content, activat
   }
   if item.default_action and not item.expired then
     props.label, props.height, props.padding_x = "Open " .. item.app, "auto", 0
-    props.background = theme[surface]
+    -- Without an explicit foreground, the title and symbolic icons inherit
+    -- the solid button's white label color.
+    props.background, props.foreground = theme[surface], theme.foreground
     props.hover, props.pressed, props.focus = props.background, props.background, theme.ring
     props.on_press = function() activate("default") end
     return ouro.button(props)
