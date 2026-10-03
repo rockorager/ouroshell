@@ -184,8 +184,8 @@ def main():
                     assert app.poll() is None and status["diagnostic"] is None, (status, (artifacts / "native.log").read_text())
                     subprocess.run(["grim", "-o", "HEADLESS-1", str(artifacts / f"{name}.png")], env=env, check=True)
                     with Image.open(artifacts / f"{name}.png") as image:
-                        # The private bus has no battery/network: status is bell,
-                        # then clock. Find their ink groups across the large gap,
+                        # The private bus has no battery/network: status is the
+                        # volume icon, bell, then clock. Find their ink groups,
                         # allowing the date's width to vary without fixed clicks.
                         bar = image.convert("RGB").crop((780, 0, 1280, 40))
                         background = Image.new("RGB", bar.size, bar.getpixel((499, 0)))
@@ -197,12 +197,14 @@ def main():
                                     groups.append([x, x])
                                 else:
                                     groups[-1][1] = x
-                        assert len(groups) == 2, f"{name}: expected visible bell and clock, got {groups}"
-                        left, right = groups[0]
+                        assert len(groups) == 3, f"{name}: expected visible volume, bell and clock, got {groups}"
+                        volume, bell, clock = groups
+                        assert 8 <= volume[1] - volume[0] <= 24, f"{name}: expected a volume icon before bell"
+                        left, right = bell
                         # The bell may carry an unread count beside it.
-                        assert 8 <= right - left <= 40 and groups[1][1] - groups[1][0] > 100, \
+                        assert 8 <= right - left <= 40 and clock[1] - clock[0] > 100, \
                             f"{name}: bell must be left of clock"
-                        assert groups[1][0] - right <= 22, f"{name}: bell adds extra padding before clock"
+                        assert clock[0] - right <= 22, f"{name}: bell adds extra padding before clock"
                     return 780 + (left + right) // 2
 
                 def color_count(image, box, expected, tolerance=18):
