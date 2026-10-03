@@ -200,11 +200,19 @@ assert(status.children[1].children[2].text == "12%" and status.gap == ouro.token
   "status gap must leave room for padding inside the bell button")
 connectivity = { icons = { "network-wireless-signal-good-symbolic" }, label = "Wi-Fi" }
 status = panel.content().children[1].children[3]
-assert(#status.children == 4 and status.children[1].key == "network" and status.children[2].key == "battery")
+assert(#status.children == 4 and status.children[1].key == "network-spacing" and status.children[2].key == "battery")
 assert(#status.children[1].children == 1 and status.children[4].key == "clock")
 assert(status.children[3].key == "notifications", "bell must be immediately left of the clock")
-assert(status.children[1].kind == "tooltip" and status.children[1].text == "Wi-Fi")
-assert(status.children[1].children[1].children[1].name == connectivity.icons[1])
+assert(status.children[1].padding_right == status.children[3].padding_x,
+  "network-to-battery spacing must match the visible battery-to-bell gap")
+local network_tooltip = status.children[1].children[1]
+assert(network_tooltip.kind == "tooltip" and network_tooltip.text == "Wi-Fi")
+assert(network_tooltip.children[1].children[1].name == connectivity.icons[1],
+  "extra spacing must stay outside the network tooltip anchor")
+power = nil
+status = panel.content().children[1].children[3]
+assert(status.children[1].padding_right == 0 and status.children[2].key == "notifications",
+  "without a battery, the bell already supplies the extra spacing")
 connectivity = nil
 power = nil
 session.caffeinated:set(true)

@@ -96,7 +96,13 @@ function M.content(props)
         } },
     } }
   end
-  if props.connectivity then status[#status + 1] = network.content(props.connectivity) end
+  if props.connectivity then
+    -- Match the visible gap contributed by the bell's horizontal padding.
+    status[#status + 1] = ouro.box { key = "network-spacing",
+      padding_right = props.power and f.spacing_2 or 0,
+      children = { network.content(props.connectivity) },
+    }
+  end
   if props.power then status[#status + 1] = battery.content(props.power) end
   if props.open_notifications then
     local unread = props.unread or 0
