@@ -14,7 +14,7 @@ echo 'Installing missing runtime and headless-test packages'
 # build-essential compiles Ourokit's PAM test fixture in tests/native_session.py.
 packages=(build-essential curl ca-certificates git python3
   python3-pil python3-gi gir1.2-glib-2.0 dbus-daemon lua5.4 sway grim wtype adwaita-icon-theme
-  libfontconfig1 libfreetype6 libxkbcommon0)
+  libfontconfig1 libfreetype6 libxkbcommon0 libpipewire-0.3-0 pipewire-bin wireplumber)
 missing=()
 for package in "${packages[@]}"; do
   if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || :)" != 'install ok installed' ]]; then

@@ -175,6 +175,7 @@ ouro.shell = { workspaces = { connect = function() return function() return stat
 local power, connectivity, time = nil, nil, "minute 1"
 require("battery").connect = function() return function() return power end end
 require("network").connect = function() return function() return connectivity end end
+require("volume").connect = function() return nil end
 require("notifications").connect = function() end
 require("clock").connect = function() return function() return time end end
 local locked = false
@@ -247,4 +248,34 @@ assert(#running.windows() == 1 and running.windows()[1].id == "lock",
   "external overlay requests must not add windows while locked")
 locked = false
 assert(running.windows()[1] == panel, "unlock must restore the panel declaration")
+
+local delta, failed
+local audio = { output = ouro.signal({ available = true, volume = .43, muted = false }), shown = ouro.signal(false),
+  adjust = function(value) delta = value; return not failed, "OutputUnavailable" end }
+require("volume").connect = function() return audio end
+running = app.run()
+panel = running.windows()[1]
+status = panel.content().children[1].children[3]
+assert(status.children[1].key == "volume-spacing" and status.children[1].padding_right == 0)
+assert(status.children[1].children[1].children[1].alt == "Volume: 43%", "application must wire live audio to the bar")
+audio.output:set({ available = true, volume = .48, muted = true })
+assert(panel.content().children[1].children[3].children[1].children[1].children[1].alt == "Muted (48%)")
+power = { percentage = 76, icon = "battery-good-symbolic" }
+connectivity = { icons = { "network-wireless-signal-good-symbolic" }, label = "Wi-Fi" }
+status = panel.content().children[1].children[3]
+assert(status.children[1].key == "network-spacing" and status.children[2].key == "volume-spacing"
+  and status.children[3].key == "battery" and status.children[4].key == "notifications")
+assert(status.children[1].padding_right == status.children[4].padding_x
+  and status.children[2].padding_right == status.children[4].padding_x,
+  "network, volume and battery must have equal visible gaps")
+power = nil
+status = panel.content().children[1].children[3]
+assert(status.children[1].padding_right == ouro.tokens.foundation.spacing_2 and status.children[2].padding_right == 0,
+  "without a battery only the network-to-volume gap needs extra space")
+app.actions["volume.up"].handler()
+assert(delta == .05)
+app.actions["volume.down"].handler()
+assert(delta == -.05)
+failed = true
+assert(not pcall(app.actions["volume.up"].handler), "failed requests must not report action success")
 print("PASS: workspace ordering, visibility, activation, states, status indicators, and overlays")

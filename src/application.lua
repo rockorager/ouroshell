@@ -9,6 +9,7 @@ local idle = require("idle")
 local lock = require("lock")
 local network = require("network")
 local notifications = require("notifications")
+local volume = require("volume")
 
 -- These must outlive builds: windows() reads them reactively and never yields.
 -- The launcher, notification center and notification popup are mutually
@@ -17,6 +18,7 @@ local overlay = ouro.signal(nil)
 local applications = catalog.new()
 local notices = notifications.new { overlay = overlay, applications = applications.entries }
 local launcher_state
+local audio
 
 local function launcher_open()
   local current = overlay()
@@ -40,6 +42,13 @@ local function toggle_notifications()
   return {}
 end
 
+local function adjust_volume(delta)
+  assert(audio, "Audio is not ready")
+  local ok, failure = audio.adjust(delta)
+  assert(ok, failure)
+  return {}
+end
+
 return ouro.app {
   id = "dev.ouro.shell",
   actions = {
@@ -55,12 +64,25 @@ return ouro.app {
       outputSchema = { type = "object", properties = {}, additionalProperties = false },
       handler = toggle_notifications,
     },
+    ["volume.up"] = {
+      description = "Raise the default output volume by five percentage points and show its level.",
+      inputSchema = { type = "object", properties = {}, additionalProperties = false },
+      outputSchema = { type = "object", properties = {}, additionalProperties = false },
+      handler = function() return adjust_volume(0.05) end,
+    },
+    ["volume.down"] = {
+      description = "Lower the default output volume by five percentage points and show its level.",
+      inputSchema = { type = "object", properties = {}, additionalProperties = false },
+      outputSchema = { type = "object", properties = {}, additionalProperties = false },
+      handler = function() return adjust_volume(-0.05) end,
+    },
   },
   run = function()
     appearance.connect()
     notifications.connect(notices)
     local power = battery.connect()
     local connectivity = network.connect()
+    audio = volume.connect()
     local workspaces = ouro.shell.workspaces.connect()
     local time = clock.connect()
     local session = idle.connect { dismiss = function() overlay:set(nil) end }
@@ -81,6 +103,7 @@ return ouro.app {
           return bar.content {
             workspaces = workspaces(), time = time(), output = output,
             open_launcher = toggle_launcher, power = power(), connectivity = connectivity(),
+            audio = audio,
             open_notifications = toggle_notifications, quiet = notices.store.quiet(),
             unread = notices.store.unread(), caffeinated = session.caffeinated(),
             decaffeinate = function()

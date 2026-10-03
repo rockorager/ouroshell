@@ -4,7 +4,7 @@ Ouroshell is a Lua desktop shell built on the
 [Ourokit](https://github.com/rockorager/ourokit) runtime.
 
 The shell provides a 40px top bar on every output, with that output's clickable
-workspaces on the left and network connectivity, battery charge, and local
+workspaces on the left and network connectivity, audio volume, battery charge, and local
 date/time on the right. Workspace names sort by their leading number, then
 alphabetically; hidden workspaces are omitted.
 Active workspaces have a rounded blue background and urgent workspaces use red text.
@@ -43,6 +43,57 @@ This is a status indicator, not a network picker or connection manager. Use
 `iwctl` or an iwd-compatible GUI to join networks. Let networkd own DHCP and
 systemd-resolved own DNS; do not enable iwd's built-in IP configuration or run
 NetworkManager/ConnMan on the same interfaces.
+
+## Volume
+
+The speaker icon follows the default PipeWire output, including mute and device
+changes. Hover it to open a compact popover with the output-device name and a
+colored level bar between zero/high-volume speaker icons. This is a display,
+not a slider: there is no thumb or dragging, and pointer input passes through it.
+Hovering the bar's speaker icon keeps it open. It never grabs keyboard focus.
+
+Confirmed volume/mute changes also show the popover for about 1.5 seconds,
+including changes made by existing `wpctl` media-key bindings or another mixer.
+Initial connection and device replacement do not flash it. Key-change feedback
+appears below the icon on every bar; hovering keeps only that bar's popup open.
+Unavailable audio uses a dimmed icon and disables the popup. No polling commands,
+PulseAudio compatibility layer, or separate audio bridge are used.
+
+For feedback even when pressing against the 0%/100% limits, bind Ouro's keys to
+the shell's `volume.up` and `volume.down` actions. These request serialized 5%
+steps, clamp at 100%, and leave mute unchanged. Replace `1000` with your user ID
+in the existing Ouro configuration's `bindings` object:
+
+```json
+{
+  "XF86AudioRaiseVolume": {
+    "action": ["call", "unix:/run/user/1000/ourokit/apps/dev.ouro.shell", "volume.up", {}],
+    "repeat": true
+  },
+  "XF86AudioLowerVolume": {
+    "action": ["call", "unix:/run/user/1000/ourokit/apps/dev.ouro.shell", "volume.down", {}],
+    "repeat": true
+  }
+}
+```
+
+The level bar displays confirmed backend state, not optimistic request values.
+Request errors appear in its heading. Action success acknowledges queuing;
+an asynchronous backend failure is reported by the audio state.
+
+This requires Ourokit's native `ouro.audio.default_output`, its `next()` change
+stream and serialized `adjust_volume`, plus `ouro.popover` with
+`interactive=false`. The prebuilt runtime pinned in `mise.toml` includes these
+APIs. It requires the PipeWire client library (`libpipewire-0.3-0` on Debian,
+`libpipewire` on Arch) and a running PipeWire service for audio control.
+
+The native integration test uses private PipeWire and Sway instances with a
+silent null output; it never changes the desktop's audio. Install `pipewire-bin`
+and WirePlumber's `wpctl` test client, then run with the matching runtime:
+
+```sh
+OUROCTL=/path/to/new/ouroctl /usr/bin/python3 tests/native_volume.py
+```
 
 ## Run
 
@@ -100,7 +151,8 @@ Use the exact endpoint printed by that process to reload source changes:
 ```
 
 Production `--mcp` exposes only declared actions, including `launcher.toggle`
-and `notifications.toggle`. It does not expose status, reload, or activation.
+and `notifications.toggle`, plus `volume.up` and `volume.down`.
+It does not expose status, reload, or activation.
 Development endpoints are private per process, not the global launcher socket.
 
 ## Install as a systemd user service
@@ -295,7 +347,8 @@ Then call the bridge's `reload-tools` tool. Descriptor discovery is explicit;
 ordinary tool calls and waiting do not discover new installations. Repeat the
 export and reload after changing actions or upgrading Ourokit's runtime tools.
 
-The descriptor exposes `launcher.toggle` and `notifications.toggle`. Start the
+The descriptor exposes `launcher.toggle`, `notifications.toggle`, `volume.up`
+and `volume.down`. Start the
 service (or `ouroctl run --mcp`) before calling these tools. The descriptor
 does not launch a process, and production endpoints do not expose development
 status/reload or desktop activation.
@@ -325,6 +378,7 @@ lua tests/launcher.lua
 lua tests/appearance.lua
 lua tests/battery.lua
 lua tests/network.lua
+lua tests/volume.lua
 lua tests/notifications.lua
 lua tests/notification_service.lua
 lua tests/notification_image.lua
@@ -529,6 +583,7 @@ not install units or restart the live shell.
 - `src/bar.lua` renders workspace state and status.
 - `src/battery.lua` owns the UPower subscription and battery indicator.
 - `src/network.lua` owns the networkd/iwd subscriptions and physical-link indicator.
+- `src/volume.lua` follows PipeWire output state and owns the volume icon, level display and timed feedback.
 - `src/launcher.lua` owns launcher search, state, launch policy, and content.
 - `src/notifications.lua` implements the `org.freedesktop.Notifications` daemon.
 - `src/notification_center.lua` holds notification history and renders cards, popups and the center.

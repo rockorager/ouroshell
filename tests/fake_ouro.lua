@@ -9,7 +9,7 @@ function M.signal(value)
 end
 
 local widgets = { "app", "layer_surface", "lock_surface", "box", "row", "column", "stack", "scroll", "virtual_list",
-  "text", "text_input", "button", "switch", "image", "tooltip" }
+  "text", "text_input", "button", "switch", "image", "tooltip", "popover" }
 
 function M.install(overrides)
   local ouro = {

@@ -3,6 +3,7 @@ local appearance = require("appearance")
 local battery = require("battery")
 local config = require("config")
 local network = require("network")
+local volume = require("volume")
 local f = ouro.tokens.foundation
 
 local M = { height = 40 }
@@ -30,6 +31,7 @@ end
 -- props.output: output name to filter workspaces, or nil for fixtures
 -- props.open_launcher, props.open_notifications: optional button handlers
 -- props.power, props.connectivity: optional battery and network snapshots
+-- props.audio: optional volume state
 -- props.quiet: whether Do Not Disturb is on
 -- props.unread: notifications that arrived since history was last opened
 -- props.caffeinated, props.decaffeinate: idle-inhibitor state and its release
@@ -99,8 +101,14 @@ function M.content(props)
   if props.connectivity then
     -- Match the visible gap contributed by the bell's horizontal padding.
     status[#status + 1] = ouro.box { key = "network-spacing",
-      padding_right = props.power and f.spacing_2 or 0,
+      padding_right = (props.audio or props.power) and f.spacing_2 or 0,
       children = { network.content(props.connectivity) },
+    }
+  end
+  if props.audio then
+    status[#status + 1] = ouro.box { key = "volume-spacing",
+      padding_right = props.power and f.spacing_2 or 0,
+      children = { volume.content(props.audio) },
     }
   end
   if props.power then status[#status + 1] = battery.content(props.power) end

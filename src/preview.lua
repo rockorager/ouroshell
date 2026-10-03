@@ -4,6 +4,12 @@ local launcher = require("launcher")
 local appearance = require("appearance")
 local catalog = require("catalog")
 local network = require("network")
+local audio = {
+  output = function() return { available = true, identity = "preview", description = "Preview speakers",
+    volume = 0.42, muted = false } end,
+  shown = ouro.signal(false), error = ouro.signal(nil),
+  dismiss = function() end,
+}
 local selected = ouro.signal("2")
 local time = "Thu Sep 10  04:32 PM"
 local visible = ouro.signal(true)
@@ -25,6 +31,7 @@ local function workspace_content()
   end
   return bar.content {
     workspaces = { available = true, workspaces = workspaces }, time = time, open_launcher = toggle,
+    audio = audio,
     power = { percentage = 67, icon = "battery-good-charging-symbolic", charging = true, low = false },
     connectivity = network.snapshot({ { Name = "wlan0", Type = "wlan", OperationalState = "routable" } },
       { wlan0 = { name = "Preview Wi-Fi", level = 0, rssi = -48 } }),

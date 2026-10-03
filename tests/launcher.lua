@@ -294,6 +294,7 @@ themed.choose_scope("apps"); themed.change("theme"); assert(#themed.results() ==
 ouro.date = function() return "12:00" end
 ouro.time = function() return 0 end
 ouro.shell = { workspaces = { connect = function() return function() return {available=false} end end } }
+require("volume").connect = function() return nil end
 local app = dofile("src/application.lua")
 local windows = app.run().windows
 assert(#windows() == 1 and windows()[1].id == "panel")
