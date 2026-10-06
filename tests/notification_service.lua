@@ -10,6 +10,7 @@ local ouro = require("fake_ouro").install {
   sleep = coroutine.yield,
   activation_token = function() return nil end,
 }
+ouro.tokens.dark = { background = "#012345FF" }
 package.loaded.appearance = {}
 local service = require("notifications")
 local bus = {
@@ -178,6 +179,10 @@ assert(overlay().kind == "popup" and shell.popup().id == id)
 assert(service.window(shell).id == "notification-popup")
 shell.toggle()
 assert(shell.center_open() and shell.popup() == nil and service.window(shell).id == "notifications")
+local center_window = service.window(shell)
+assert(#center_window.anchors == 4 and center_window.exclusive_zone == 0
+  and center_window.background_effect == "blur" and center_window.background == "#0123454d",
+  "the center must share the launcher's full-screen blurred backdrop")
 notify()
 assert(shell.center_open(), "a notification must not replace the open center")
 shell.toggle()

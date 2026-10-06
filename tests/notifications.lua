@@ -5,6 +5,7 @@ local ouro = require("fake_ouro").install {
   tokens = {
     foundation = setmetatable({}, { __index = function() return 16.0 end }),
     palette = { transparent = "transparent" },
+    dark = { background = "#012345FF" },
   },
   -- Ourokit rejects signal writes while a build transaction is running.
   signal = function(value)
@@ -247,6 +248,16 @@ assert(find(find(single_tree, "history").render_item(1), "group").foreground == 
 assert(single_tree.on_key.keys[1] == "Escape" and single_tree.on_key.propagate == false)
 single_tree.on_key.handler()
 assert(closed_center, "Escape must close the notification center")
+closed_center = false
+assert(single_tree.on_pointer_down_outside.propagate == false)
+single_tree.on_pointer_down_outside.handler()
+assert(closed_center, "pressing outside the panel must close the notification center")
+local placed = center.overlay(single_tree, 1280, 760)
+assert(placed.kind == "stack" and find(placed, "panel").width == 420 and find(placed, "panel").height == 728
+  and find(placed, "position").alignment == "right" and find(placed, "panel").children[1] == single_tree)
+assert(find(placed, "shadow").width == 460 and find(placed, "shadow").height == 760
+  and find(placed, "shadow").bytes:find('x="24" y="32" width="420" height="728"', 1, true),
+  "the shadow must sit behind the right-aligned panel, dropped below it")
 local held = {}
 local banner = center.popup({ id = 9, app = "Chat", title = "Hi", body = "", actions = {} },
   { dismiss = function() end, activate = function() end, hold = function(value) held[#held + 1] = value end })
@@ -264,7 +275,7 @@ local running = app.run()
 assert(coroutine.resume(tasks[1]))
 local function window() return running.windows()[1] end
 local function view() return window().content() end
-assert(window().width == 420 and window().keyboard_interactivity == "on_demand")
+assert(#window().anchors == 4 and window().background_effect == "blur" and window().keyboard_interactivity == "on_demand")
 assert(find(view(), "subtitle").text == "This session · 4 notifications")
 local message_group = find(view(), "app-Messages")
 assert(find(view(), "history").item_count == 5, "three headers plus two expanded messages")

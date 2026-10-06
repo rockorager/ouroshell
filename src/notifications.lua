@@ -1,5 +1,6 @@
 local ouro = require("ouro")
 local center = require("notification_center")
+local overlay = require("overlay")
 local notification_image = require("notification_image")
 local support = require("dbus_support")
 local M = {}
@@ -245,14 +246,16 @@ end
 
 function M.window(state)
   if state.center_open() then
+    -- Like the launcher, the backdrop covers everything but the bar, and a
+    -- press outside the panel closes it.
     return ouro.layer_surface { id = "notifications", namespace = "ouroshell-notifications", layer = "overlay",
-      width = 420, height = 0, anchors = { "top", "bottom", "right" },
-      margins = { top = 56, bottom = 16, right = 16 }, exclusive_zone = -1,
-      keyboard_interactivity = "on_demand", background = ouro.tokens.palette.transparent,
-      content = function() return center.content(state.store, {
+      width = 0, height = 0, anchors = { "top", "bottom", "left", "right" }, exclusive_zone = 0,
+      background = overlay.background(), background_effect = "blur",
+      keyboard_interactivity = "on_demand",
+      content = function(width, height) return center.overlay(center.content(state.store, {
         close = state.close_center, clear = state.clear, dismiss = state.dismiss,
         activate = state.activate, message = state.message,
-      }) end,
+      }), width, height) end,
     }
   end
   local item = state.popup()

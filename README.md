@@ -205,8 +205,8 @@ content. A lighter charcoal face in dark mode, a fine rim, and a soft downward
 shadow separate the card from the desktop. The shadow uses a decorative SVG
 through Ourokit's image renderer. A uniform dark translucent tint fills the
 selected output below the bar in both light and dark mode. Its opacity is
-controlled by the alpha channel of `launcher.background` in `src/launcher.lua`
-(currently 30%).
+controlled by the alpha channel of `overlay.background` in `src/overlay.lua`
+(currently 30%), which the notification center shares.
 Real backdrop blur is requested through `ext-background-effect-v1`; compositors
 without it show the tint without blur.
 
@@ -405,7 +405,8 @@ preview cannot launch applications, lock, log out, or power off:
 
 Ouroshell owns `org.freedesktop.Notifications` through `ouro.dbus`. The bar's bell
 opens a right-edge notification center; `notifications.toggle` does the same
-through MCP. New notifications show a popup without taking keyboard focus.
+through MCP. Like the launcher, the center casts a soft shadow over a blurred,
+tinted backdrop below the bar, and clicking outside the panel closes it. New notifications show a popup without taking keyboard focus.
 Do Not Disturb suppresses popups but keeps history. Both views follow the system
 theme and support dismissal, grouped history and app-provided actions.
 The bell shows how many retained notifications arrived since the center was

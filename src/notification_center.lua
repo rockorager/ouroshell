@@ -1,6 +1,7 @@
 local ouro = require("ouro")
 local appearance = require("appearance")
 local config = require("config")
+local overlay = require("overlay")
 local f = ouro.tokens.foundation
 local M = {}
 
@@ -244,9 +245,32 @@ function M.content(state, callbacks)
   return ouro.box { key = "notification-center", width = "fill", height = "fill", surface = "sidebar",
     on_key = { keys = { "Escape" }, states = { "pressed" }, propagate = false,
       handler = function() callbacks.close() end },
+    on_pointer_down_outside = { propagate = false, handler = function() callbacks.close() end },
     border_width = f.border_width_default, radius = f.radius_5, padding = f.spacing_4, children = {
       ouro.column { key = "layout", gap = f.spacing_4, cross_alignment = "stretch", children = layout },
     } }
+end
+
+-- Place the panel from M.content on a full-screen layer, like the launcher:
+-- at the right edge with a drop shadow, over the window's blurred backdrop.
+function M.overlay(panel, width, height)
+  width, height = width or 1280, height or 760
+  local margin = f.spacing_4
+  local panel_width = math.min(420, width - 2 * margin)
+  local panel_height = math.max(0, height - 2 * margin)
+  -- The shadow image spans the full height, from the shadow's left reach to
+  -- the right edge of the screen.
+  local shadow_width = math.min(overlay.shadow_reach + panel_width + margin, width)
+  local shadow = overlay.shadow(shadow_width, height, shadow_width - margin - panel_width, margin,
+    panel_width, panel_height, f.radius_5)
+  return ouro.stack { key = "notification-overlay", children = {
+    ouro.box { key = "shadow-position", width = "fill", height = "fill", alignment = "right", children = {
+      ouro.image { key = "shadow", bytes = shadow, width = shadow_width, height = height, fit = "fill", alt = "" },
+    } },
+    ouro.box { key = "position", width = "fill", height = "fill", padding = margin, alignment = "right", children = {
+      ouro.box { key = "panel", width = panel_width, height = panel_height, children = { panel } },
+    } },
+  } }
 end
 
 local function popup(item, callbacks, actions, interaction)

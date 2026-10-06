@@ -1,6 +1,7 @@
 local ouro = require("ouro")
 local appearance = require("appearance")
 local config = require("config")
+local overlay = require("overlay")
 local f = ouro.tokens.foundation
 
 local M = {}
@@ -9,13 +10,8 @@ local M = {}
 local row_height, palette_height = 56, 620
 local search_height = f.spacing_8
 local frame_padding = f.spacing_4
-local shadow_blur = 12
 
-function M.background()
-  -- The opaque card carries contrast; keep the blurred backdrop light-touch
-  -- and dark-tinted even when the content uses the light palette.
-  return ouro.color.with_alpha(ouro.tokens.dark.background, 0.3)
-end
+M.background = overlay.background
 
 -- These are shell-owned actions, never commands supplied by search text.
 local lock = {
@@ -310,19 +306,12 @@ function M.content(state, height, width)
   local theme, palette = appearance.colors()
   local frame_width = math.min(560 + 2 * frame_padding, width - 2 * f.spacing_5)
   local frame_height = math.min(palette_height + 2 * frame_padding, height - 2 * f.spacing_5)
-  -- Ourokit has no box-shadow primitive. Rasterize a decorative SVG centered
-  -- behind the card: the card plus its blur reach, clipped to the viewport.
-  -- The rectangle sits lower in the image, dropping the shadow by `offset`.
-  local reach, offset = 2 * shadow_blur, f.spacing_2
+  -- Center the shadow image behind the card, clipped to the viewport.
+  local reach, offset = overlay.shadow_reach, overlay.shadow_offset
   local shadow_width = math.min(frame_width + 2 * reach, width)
   local shadow_height = math.min(frame_height + 2 * (reach + offset), height)
-  local shadow = string.format([[<svg xmlns="http://www.w3.org/2000/svg" width="%g" height="%g">
-    <defs><filter id="shadow" x="-50%%" y="-50%%" width="200%%" height="200%%">
-      <feGaussianBlur stdDeviation="%g"/>
-    </filter></defs>
-    <rect x="%g" y="%g" width="%g" height="%g" rx="%g" fill="black" fill-opacity="0.4" filter="url(#shadow)"/>
-  </svg>]], shadow_width, shadow_height, shadow_blur, (shadow_width - frame_width) / 2,
-    (shadow_height - frame_height) / 2 + offset, frame_width, frame_height, f.radius_6)
+  local shadow = overlay.shadow(shadow_width, shadow_height, (shadow_width - frame_width) / 2,
+    (shadow_height - frame_height) / 2, frame_width, frame_height, f.radius_6)
   local colors = {
     selected = theme.accent_selected, selected_border = theme.ring,
     foreground = theme.foreground, muted = theme.muted_foreground,

@@ -86,7 +86,8 @@ def main():
                 capture("reset")
                 click(900, 703)
                 popup = capture("popup-dark")
-                assert popup.getpixel((850, 400)) == initial.getpixel((500, 400)), "popup retained the full-height panel"
+                assert popup.getpixel((850, 400)) == popup.getpixel((500, 400)), "popup retained the full-height panel"
+                assert popup.getpixel((500, 400)) != initial.getpixel((500, 400)), "the center did not dim its backdrop"
                 time.sleep(6)
                 expired = capture("expired")
                 assert expired.getpixel((850, 400)) == dark.getpixel((850, 400)), "expiry did not restore history"

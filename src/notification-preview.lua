@@ -1,6 +1,7 @@
 local ouro = require("ouro")
 local center = require("notification_center")
 local appearance = require("appearance")
+local overlay = require("overlay")
 local state = center.new()
 local popup = ouro.signal(nil)
 local message = ouro.signal("Nothing here changes your real notifications.")
@@ -74,16 +75,18 @@ return ouro.app {
           }) end,
         } }
       end
+      -- Leave the shell bar's 40px uncovered, as the shell's center does.
       return { ouro.layer_surface {
         id = "center", namespace = "ouroshell-notification-preview", layer = "overlay",
-        width = 420, height = 0, anchors = { "top", "bottom", "right" },
-        margins = { top = 56, bottom = 16, right = 16 }, exclusive_zone = -1,
-        keyboard_interactivity = "on_demand", background = ouro.tokens.palette.transparent,
-        content = function() return center.content(state, {
+        width = 0, height = 0, anchors = { "top", "bottom", "left", "right" },
+        margins = { top = 40 }, exclusive_zone = 0,
+        background = overlay.background(), background_effect = "blur",
+        keyboard_interactivity = "on_demand",
+        content = function(width, height) return center.overlay(center.content(state, {
           close = function() ouro.exit(0) end, sample = sample, reset = reset,
           clear = function() state.clear(); message:set("Preview history cleared.") end,
           dismiss = state.remove, activate = activate, message = message,
-        }) end,
+        }), width, height) end,
       } }
     end }
   end,

@@ -134,8 +134,9 @@ def main():
 
                 def popup_geometry():
                     # xdg_popup.configure is in parent-surface coordinates.
-                    # Both shell layers are top-right anchored with these
-                    # margins; read menu size/placement from the compositor.
+                    # The banner is top-right anchored with these margins; the
+                    # center fills the output below the 40px bar. Read menu
+                    # size/placement from the compositor.
                     trace = (artifacts / "native.log").read_text()
                     # libwayland versions use either @ or # before object IDs.
                     events = list(re.finditer(r"xdg_popup[@#](\d+)\.configure\((-?\d+), (-?\d+), (\d+), (\d+)\)", trace))
@@ -145,6 +146,11 @@ def main():
                     identity, x, y, width, height = map(int, event.groups())
                     if re.search(rf"xdg_popup[@#]{identity}\.(?:destroy|popup_done)\(", trace[event.end():]):
                         return None
+                    # Wayland reuses object IDs: use the latest creation of each.
+                    parent = re.findall(rf"zwlr_layer_surface_v1[@#](\d+)\.get_popup\(xdg_popup[@#]{identity}\)", trace[:event.start()])[-1]
+                    namespace = re.findall(rf"get_layer_surface\(new id zwlr_layer_surface_v1[@#]{parent},[^\n]*\"([^\"]+)\"\)", trace[:event.start()])[-1]
+                    if namespace == "ouroshell-notifications":
+                        return x, 40 + y, width, height
                     return 1280 - 420 - 16 + x, 56 + y, width, height
 
                 def select_menu(index):
@@ -543,6 +549,10 @@ return o.app { id = "dev.ouro.activation-test", single_instance = true, run = fu
                 assert center_mapped()
                 keys("Escape")
                 wait_for(lambda: not center_mapped(), "Escape did not close the notification center")
+                call(endpoint, "notifications.toggle")
+                wait_for(center_mapped, "toggle did not reopen the notification center")
+                click(400, 400)
+                wait_for(lambda: not center_mapped(), "clicking outside did not close the notification center")
 
                 # Raw image-data is padded deliberately: tightly packed test
                 # data would not catch a loader which ignores rowstride. The
