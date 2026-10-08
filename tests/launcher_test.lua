@@ -253,10 +253,15 @@ return {
     ui:child("launcher"):send { type = "QUERY", value = "folio" }
     t:settle()
     assert(t:node(base .. "/results-empty/empty").label == "No matches. Try another name or keyword.")
+    local search = base .. "/search-shell/search-row/search"
+    local focus = ui:child("launcher"):context().focus
+    assert(t:node(search).focused, "the search field has focus")
     local folio = { id = "folio.desktop", name = "Folio", exec = "folio", visible = true }
     clock.resolve("list", { folio, entries[1] })
     t:settle()
     assert(ui:child("launcher"):context().query == "folio", "the refresh keeps the search")
+    assert(ui:child("launcher"):context().focus == focus and t:node(search).focused,
+      "the refresh neither requests focus again nor moves it from the search field")
     local key = "application-folio.desktop"
     assert(t:node(base .. "/results/" .. key .. "/row/" .. key).label == "Folio", "the open launcher shows the new entry")
     actor:stop()
