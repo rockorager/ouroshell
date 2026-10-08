@@ -2,10 +2,10 @@
 {"a":"battery","k":"start","m":"battery","r":[{"a":"battery","e":"ouro.init","tr":[]}],"s":{"battery":{"children":[],"context":{"retry":1000},"states":["upower","upower.online"],"status":"active"}},"t":0}
 {"a":"battery","k":"stop","r":[],"s":{"battery":{"status":"stopped"}},"t":0}
 {"a":"battery","k":"start","m":"battery","r":[{"a":"battery","e":"ouro.init","tr":[]}],"s":{"battery":{"children":[],"context":{"retry":1000},"states":["upower","upower.online"],"status":"active"}},"t":0}
-{"a":"battery","e":{"output":null,"state":"upower.online","token":3,"type":"done.invoke.upower"},"k":"invoke","o":"invoke","r":[{"a":"battery","e":"done.invoke.upower","tr":[3]}],"s":{"battery":{"states":["upower","upower.offline"]}},"t":0}
+{"a":"battery","e":{"output":{},"state":"upower.online","token":3,"type":"done.invoke.upower"},"k":"invoke","o":"invoke","r":[{"a":"battery","e":"done.invoke.upower","tr":[3]}],"s":{"battery":{"states":["upower","upower.offline"]}},"t":0}
 {"a":"battery","k":"stop","r":[],"s":{"battery":{"status":"stopped"}},"t":0}
 {"a":"battery","k":"start","m":"battery","r":[{"a":"battery","e":"ouro.init","tr":[]}],"s":{"battery":{"children":[],"context":{"retry":1000},"states":["upower","upower.online"],"status":"active"}},"t":0}
-{"a":"battery","e":{"output":null,"state":"upower.online","token":3,"type":"done.invoke.upower"},"k":"invoke","o":"invoke","r":[{"a":"battery","e":"done.invoke.upower","tr":[3]}],"s":{"battery":{"states":["upower","upower.offline"]}},"t":0}
+{"a":"battery","e":{"output":{},"state":"upower.online","token":3,"type":"done.invoke.upower"},"k":"invoke","o":"invoke","r":[{"a":"battery","e":"done.invoke.upower","tr":[3]}],"s":{"battery":{"states":["upower","upower.offline"]}},"t":0}
 {"a":"battery","e":{"state":"upower.offline","time_ms":1000,"token":4,"type":"after.retry.upower.offline"},"k":"timer","o":"timer","r":[{"a":"battery","e":"after.retry.upower.offline","tr":[1]}],"s":{"battery":{"context":{"retry":2000},"states":["upower","upower.online"]}},"t":1000}
 {"a":"battery","k":"stop","r":[],"s":{"battery":{"status":"stopped"}},"t":1000}
 {"a":"battery","k":"start","m":"battery","r":[{"a":"battery","e":"ouro.init","tr":[]}],"s":{"battery":{"children":[],"context":{"retry":1000},"states":["upower","upower.online"],"status":"active"}},"t":1000}

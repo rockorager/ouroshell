@@ -2,10 +2,10 @@
 {"a":"appearance","k":"start","m":"appearance","r":[{"a":"appearance","e":"ouro.init","tr":[]}],"s":{"appearance":{"children":[],"context":{"retry":1000,"scheme":"light"},"states":["portal","portal.online"],"status":"active"}},"t":0}
 {"a":"appearance","k":"stop","r":[],"s":{"appearance":{"status":"stopped"}},"t":0}
 {"a":"appearance","k":"start","m":"appearance","r":[{"a":"appearance","e":"ouro.init","tr":[]}],"s":{"appearance":{"children":[],"context":{"retry":1000,"scheme":"light"},"states":["portal","portal.online"],"status":"active"}},"t":0}
-{"a":"appearance","e":{"output":null,"state":"portal.online","token":3,"type":"done.invoke.portal"},"k":"invoke","o":"invoke","r":[{"a":"appearance","e":"done.invoke.portal","tr":[4]}],"s":{"appearance":{"states":["portal","portal.offline"]}},"t":0}
+{"a":"appearance","e":{"output":{},"state":"portal.online","token":3,"type":"done.invoke.portal"},"k":"invoke","o":"invoke","r":[{"a":"appearance","e":"done.invoke.portal","tr":[4]}],"s":{"appearance":{"states":["portal","portal.offline"]}},"t":0}
 {"a":"appearance","k":"stop","r":[],"s":{"appearance":{"status":"stopped"}},"t":0}
 {"a":"appearance","k":"start","m":"appearance","r":[{"a":"appearance","e":"ouro.init","tr":[]}],"s":{"appearance":{"children":[],"context":{"retry":1000,"scheme":"light"},"states":["portal","portal.online"],"status":"active"}},"t":0}
-{"a":"appearance","e":{"output":null,"state":"portal.online","token":3,"type":"done.invoke.portal"},"k":"invoke","o":"invoke","r":[{"a":"appearance","e":"done.invoke.portal","tr":[4]}],"s":{"appearance":{"states":["portal","portal.offline"]}},"t":0}
+{"a":"appearance","e":{"output":{},"state":"portal.online","token":3,"type":"done.invoke.portal"},"k":"invoke","o":"invoke","r":[{"a":"appearance","e":"done.invoke.portal","tr":[4]}],"s":{"appearance":{"states":["portal","portal.offline"]}},"t":0}
 {"a":"appearance","e":{"state":"portal.offline","time_ms":1000,"token":4,"type":"after.retry.portal.offline"},"k":"timer","o":"timer","r":[{"a":"appearance","e":"after.retry.portal.offline","tr":[1]}],"s":{"appearance":{"context":{"retry":2000},"states":["portal","portal.online"]}},"t":1000}
 {"a":"appearance","k":"stop","r":[],"s":{"appearance":{"status":"stopped"}},"t":1000}
 {"a":"appearance","k":"start","m":"appearance","r":[{"a":"appearance","e":"ouro.init","tr":[]}],"s":{"appearance":{"children":[],"context":{"retry":1000,"scheme":"light"},"states":["portal","portal.online"],"status":"active"}},"t":1000}

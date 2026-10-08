@@ -2,7 +2,7 @@
 {"a":"volume","k":"start","m":"volume","r":[{"a":"volume","e":"ouro.init","tr":[]}],"s":{"volume":{"children":[],"context":{"output":{"available":false}},"states":["pipewire","pipewire.following","feedback","feedback.hidden"],"status":"active"}},"t":0}
 {"a":"volume","k":"stop","r":[],"s":{"volume":{"status":"stopped"}},"t":0}
 {"a":"volume","k":"start","m":"volume","r":[{"a":"volume","e":"ouro.init","tr":[]}],"s":{"volume":{"children":[],"context":{"output":{"available":false}},"states":["pipewire","pipewire.following","feedback","feedback.hidden"],"status":"active"}},"t":0}
-{"a":"volume","e":{"output":null,"state":"pipewire.following","token":3,"type":"done.invoke.follow"},"k":"invoke","o":"invoke","r":[{"a":"volume","e":"done.invoke.follow","tr":[7]}],"s":{"volume":{"context":{"output":{"available":false}},"states":["pipewire","pipewire.closed","feedback","feedback.hidden"]}},"t":0}
+{"a":"volume","e":{"output":{},"state":"pipewire.following","token":3,"type":"done.invoke.follow"},"k":"invoke","o":"invoke","r":[{"a":"volume","e":"done.invoke.follow","tr":[7]}],"s":{"volume":{"context":{"output":{"available":false}},"states":["pipewire","pipewire.closed","feedback","feedback.hidden"]}},"t":0}
 {"a":"volume","k":"stop","r":[],"s":{"volume":{"status":"stopped"}},"t":0}
 {"a":"volume","k":"start","m":"volume","r":[{"a":"volume","e":"ouro.init","tr":[]}],"s":{"volume":{"children":[],"context":{"output":{"available":false}},"states":["pipewire","pipewire.following","feedback","feedback.hidden"],"status":"active"}},"t":0}
 {"a":"volume","e":{"handle":"x","type":"CONNECTED"},"k":"event","o":"generated","r":[{"a":"volume","e":"CONNECTED","tr":[1]}],"s":{"volume":{"context":{"handle":"x"}}},"t":0}
@@ -18,7 +18,7 @@
 {"a":"volume","k":"start","m":"volume","r":[{"a":"volume","e":"ouro.init","tr":[]}],"s":{"volume":{"children":[],"context":{"output":{"available":false}},"states":["pipewire","pipewire.following","feedback","feedback.hidden"],"status":"active"}},"t":0}
 {"a":"volume","e":{"handle":"x","type":"CONNECTED"},"k":"event","o":"generated","r":[{"a":"volume","e":"CONNECTED","tr":[1]}],"s":{"volume":{"context":{"handle":"x"}}},"t":0}
 {"a":"volume","e":{"type":"DOWN"},"k":"event","o":"generated","r":[{"a":"volume","e":"DOWN","tr":[2,9]}],"s":{"volume":{"children":["adjust.6"],"states":["pipewire","pipewire.following","feedback","feedback.shown"]}},"t":0}
-{"a":"volume","e":{"id":"adjust.6","output":null,"token":7,"type":"done.actor.adjust.6"},"k":"task","o":"child","r":[{"a":"volume","e":"done.actor.adjust.6","tr":[5]}],"s":{"volume":{"children":[]}},"t":0}
+{"a":"volume","e":{"id":"adjust.6","output":{},"token":7,"type":"done.actor.adjust.6"},"k":"task","o":"child","r":[{"a":"volume","e":"done.actor.adjust.6","tr":[5]}],"s":{"volume":{"children":[]}},"t":0}
 {"a":"volume","k":"stop","r":[],"s":{"volume":{"status":"stopped"}},"t":0}
 {"a":"volume","k":"start","m":"volume","r":[{"a":"volume","e":"ouro.init","tr":[]}],"s":{"volume":{"children":[],"context":{"output":{"available":false}},"states":["pipewire","pipewire.following","feedback","feedback.hidden"],"status":"active"}},"t":0}
 {"a":"volume","e":{"handle":"x","type":"CONNECTED"},"k":"event","o":"generated","r":[{"a":"volume","e":"CONNECTED","tr":[1]}],"s":{"volume":{"context":{"handle":"x"}}},"t":0}

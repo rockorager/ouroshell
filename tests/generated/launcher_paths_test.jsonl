@@ -22,7 +22,7 @@
 {"a":"launcher","k":"stop","r":[],"s":{"launcher":{"status":"stopped"}},"t":0}
 {"a":"launcher","k":"start","m":"launcher","r":[{"a":"launcher","e":"ouro.init","tr":[]}],"s":{"launcher":{"children":[],"context":{"focus":0,"query":"","scope":"all","selected":1},"states":["browsing"],"status":"active"}},"t":0}
 {"a":"launcher","e":{"entry":{},"type":"ACTIVATE"},"k":"event","o":"generated","r":[{"a":"launcher","e":"ACTIVATE","tr":[4]}],"s":{"launcher":{"context":{"target":{}},"states":["executing"]}},"t":0}
-{"a":"launcher","e":{"output":null,"state":"executing","token":3,"type":"done.invoke.execute"},"k":"invoke","o":"invoke","r":[{"a":"launcher","e":"done.invoke.execute","tr":[13]}],"s":{"launcher":{"states":["dismissed"],"status":"done"}},"t":0}
+{"a":"launcher","e":{"output":{},"state":"executing","token":3,"type":"done.invoke.execute"},"k":"invoke","o":"invoke","r":[{"a":"launcher","e":"done.invoke.execute","tr":[13]}],"s":{"launcher":{"states":["dismissed"],"status":"done"}},"t":0}
 {"a":"launcher","k":"stop","r":[],"s":{"launcher":{"status":"stopped"}},"t":0}
 {"a":"launcher","k":"start","m":"launcher","r":[{"a":"launcher","e":"ouro.init","tr":[]}],"s":{"launcher":{"children":[],"context":{"focus":0,"query":"","scope":"all","selected":1},"states":["browsing"],"status":"active"}},"t":0}
 {"a":"launcher","e":{"entry":{},"type":"ACTIVATE"},"k":"event","o":"generated","r":[{"a":"launcher","e":"ACTIVATE","tr":[4]}],"s":{"launcher":{"context":{"target":{}},"states":["executing"]}},"t":0}
