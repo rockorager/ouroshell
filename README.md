@@ -50,7 +50,8 @@ The speaker icon follows the default PipeWire output, including mute and device
 changes. Hover it to open a compact popover with the output-device name and a
 colored level bar between zero/high-volume speaker icons. This is a display,
 not a slider: there is no thumb or dragging, and pointer input passes through it.
-Hovering the bar's speaker icon keeps it open. It never grabs keyboard focus.
+Hovering the bar's speaker icon keeps it open. The card fades in over 120 ms, like
+the network tooltip. It never grabs keyboard focus.
 
 Confirmed volume/mute changes also show the popover for about 1.5 seconds,
 including changes made by existing `wpctl` media-key bindings or another mixer.

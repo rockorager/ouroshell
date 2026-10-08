@@ -137,4 +137,35 @@ return {
     s.reject("portal", "bus lost")
     assert(actor:context().scheme == "light", "losing the bus falls back to light")
   end,
+  ["the volume card fades in on each opening"] = function(t)
+    local s = machine.manual_scheduler()
+    local actor = volume.chart { follow = function() machine.sleep(machine.max_delay_ms) end, adjust = never }
+      :start { scheduler = s }
+    s.emit("follow", { type = "CONNECTED", handle = { fake = "output" } })
+    actor:send { type = "OUTPUT", output = output() }
+    local popover, transition, box = o.popover, o.transition, o.box
+    local opened, fade, opacity
+    o.popover = function(props) opened = props; return popover(props) end
+    o.transition = function(props) fade = props; return transition(props) end
+    o.box = function(props)
+      if props.key == "volume-card" then opacity = props.opacity end
+      return box(props)
+    end
+    local ok, failure = pcall(function()
+      t:mount(function() return volume.content(actor, "light") end, { width = 40, height = 40, padding = 0 })
+      assert(opened and not opened.open, "hidden until feedback or hover")
+      actor:send { type = "OUTPUT", output = output { volume = 0.6 } }
+      t:settle()
+      assert(opened.open, "a confirmed change opens the card")
+      opened.content()
+      assert(fade.key == "fade" and fade.initial == 0 and fade.target == 1
+        and fade.duration == 120 and fade.easing == "ease_out", "the card uses the tooltip's 120 ms ease-out fade")
+      for _, value in ipairs({ 0, .4, 1 }) do
+        fade.render(value)
+        assert(opacity == value, "the fade applies to the whole card")
+      end
+    end)
+    o.popover, o.transition, o.box = popover, transition, box
+    assert(ok, failure)
+  end,
 }

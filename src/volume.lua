@@ -111,14 +111,14 @@ local function icon(key, name, color, alt)
     width = f.spacing_4, height = f.spacing_4, tint = color, alt = alt or "" }
 end
 
-function M.popup(volume, scheme)
+function M.popup(volume, scheme, opacity)
   local c = volume:context()
   local snapshot = c.output
   local theme, palette = appearance.colors(scheme)
   local failure = c.error
   local name = snapshot.description or snapshot.name or "Audio output"
   local value = snapshot.available and not snapshot.muted and math.min(100, percentage(snapshot)) or 0
-  return ouro.box { key = "volume-card", width = "fill", height = "fill",
+  return ouro.box { key = "volume-card", width = "fill", height = "fill", opacity = opacity,
     surface = "sidebar", radius = f.radius_4, padding = f.spacing_3,
     border_width = f.border_width_default, border = theme.border,
     children = {
@@ -168,7 +168,14 @@ local indicator = machine.component(machine.create {
     -- The popover closed itself (for example at a screen edge): forget both
     -- the hover and the shared feedback.
     on_close = { self:event("CLOSED"), volume:event("DISMISS") },
-    content = function() return M.popup(volume, scheme) end,
+    -- The card fades in like Ourokit's tooltips: 120 ms, ease-out. Whether
+    -- it shows is chart state (feedback.shown, the hover above); the fade's
+    -- progress stays native. Content mounts fresh on each opening, so every
+    -- opening fades in.
+    content = function()
+      return ouro.transition { key = "fade", initial = 0, target = 1, duration = 120, easing = "ease_out",
+        render = function(opacity) return M.popup(volume, scheme, opacity) end }
+    end,
     children = { icon("icon", name,
       snapshot.available and theme.sidebar_foreground or theme.muted_foreground, text) },
   }
