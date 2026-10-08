@@ -1,0 +1,9 @@
+{"app":"src","format":"ouro.machine.log","generated":{"chart":"volume-indicator","issues":[],"paths":[{"steps":[],"targets":["sidle"]},{"steps":["ACTIVE"],"targets":["t1"]},{"steps":["CLOSED"],"targets":["t2"]}],"states":{"reached":1,"total":1},"transitions":{"reached":2,"total":2},"unreached":[]},"t0":0,"version":2}
+{"a":"volume-indicator","k":"start","m":"volume-indicator","r":[{"a":"volume-indicator","e":"ouro.init","tr":[]}],"s":{"volume-indicator":{"children":[],"context":{"active":false},"states":["idle"],"status":"active"}},"t":0}
+{"a":"volume-indicator","k":"stop","r":[],"s":{"volume-indicator":{"status":"stopped"}},"t":0}
+{"a":"volume-indicator","k":"start","m":"volume-indicator","r":[{"a":"volume-indicator","e":"ouro.init","tr":[]}],"s":{"volume-indicator":{"children":[],"context":{"active":false},"states":["idle"],"status":"active"}},"t":0}
+{"a":"volume-indicator","e":{"type":"ACTIVE","value":true},"k":"event","o":"generated","r":[{"a":"volume-indicator","e":"ACTIVE","tr":[1]}],"s":{"volume-indicator":{"context":{"active":true}}},"t":0}
+{"a":"volume-indicator","k":"stop","r":[],"s":{"volume-indicator":{"status":"stopped"}},"t":0}
+{"a":"volume-indicator","k":"start","m":"volume-indicator","r":[{"a":"volume-indicator","e":"ouro.init","tr":[]}],"s":{"volume-indicator":{"children":[],"context":{"active":false},"states":["idle"],"status":"active"}},"t":0}
+{"a":"volume-indicator","e":{"type":"CLOSED"},"k":"event","o":"generated","r":[{"a":"volume-indicator","e":"CLOSED","tr":[2]}],"t":0}
+{"a":"volume-indicator","k":"stop","r":[],"s":{"volume-indicator":{"status":"stopped"}},"t":0}

@@ -1,0 +1,7 @@
+{"app":"src","format":"ouro.machine.log","generated":{"chart":"catalog","issues":[],"paths":[{"steps":["error.invoke.list"],"targets":["sfailed","sloading","t2"]},{"steps":["done.invoke.list"],"targets":["sready","t1"]}],"states":{"reached":3,"total":3},"transitions":{"reached":2,"total":2},"unreached":[]},"t0":0,"version":2}
+{"a":"catalog","k":"start","m":"catalog","r":[{"a":"catalog","e":"ouro.init","tr":[]}],"s":{"catalog":{"children":[],"context":{"entries":{}},"states":["loading"],"status":"active"}},"t":0}
+{"a":"catalog","e":{"error":"generated error","state":"loading","token":2,"type":"error.invoke.list"},"k":"invoke","o":"invoke","r":[{"a":"catalog","e":"error.invoke.list","tr":[2]}],"s":{"catalog":{"context":{"error":"generated error"},"states":["failed"]}},"t":0}
+{"a":"catalog","k":"stop","r":[],"s":{"catalog":{"status":"stopped"}},"t":0}
+{"a":"catalog","k":"start","m":"catalog","r":[{"a":"catalog","e":"ouro.init","tr":[]}],"s":{"catalog":{"children":[],"context":{"entries":{}},"states":["loading"],"status":"active"}},"t":0}
+{"a":"catalog","e":{"output":null,"state":"loading","token":2,"type":"done.invoke.list"},"k":"invoke","o":"invoke","r":[{"a":"catalog","e":"done.invoke.list","tr":[1]}],"s":{"catalog":{"context":{"entries":null},"states":["ready"]}},"t":0}
+{"a":"catalog","k":"stop","r":[],"s":{"catalog":{"status":"stopped"}},"t":0}

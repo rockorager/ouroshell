@@ -1,0 +1,26 @@
+{"app":"src","format":"ouro.machine.log","generated":{"chart":"clock","issues":[],"paths":[{"steps":[],"targets":["stick","stick.reading","slogind","slogind.online"]},{"steps":["done.invoke.date"],"targets":["stick.waiting","t2"]},{"steps":["done.invoke.sleeps"],"targets":["slogind.offline","t6"]},{"steps":["RESUMED"],"targets":["t1"]},{"steps":["done.invoke.date","timer"],"targets":["t3"]},{"steps":["done.invoke.sleeps","timer"],"targets":["t4"]},{"steps":["CONNECTED"],"targets":["t5"]},{"steps":["error.invoke.sleeps"],"targets":["t7"]}],"states":{"reached":6,"total":6},"transitions":{"reached":7,"total":7},"unreached":[]},"t0":0,"version":2}
+{"a":"clock","k":"start","m":"clock","r":[{"a":"clock","e":"ouro.init","tr":[]}],"s":{"clock":{"children":[],"context":{"retry":1000,"second":0,"time":""},"states":["tick","tick.reading","logind","logind.online"],"status":"active"}},"t":0}
+{"a":"clock","k":"stop","r":[],"s":{"clock":{"status":"stopped"}},"t":0}
+{"a":"clock","k":"start","m":"clock","r":[{"a":"clock","e":"ouro.init","tr":[]}],"s":{"clock":{"children":[],"context":{"retry":1000,"second":0,"time":""},"states":["tick","tick.reading","logind","logind.online"],"status":"active"}},"t":0}
+{"a":"clock","e":{"output":{},"state":"tick.reading","token":3,"type":"done.invoke.date"},"k":"invoke","o":"invoke","r":[{"a":"clock","e":"done.invoke.date","tr":[2]}],"s":{"clock":{"states":["tick","tick.waiting","logind","logind.online"]}},"t":0}
+{"a":"clock","k":"stop","r":[],"s":{"clock":{"status":"stopped"}},"t":0}
+{"a":"clock","k":"start","m":"clock","r":[{"a":"clock","e":"ouro.init","tr":[]}],"s":{"clock":{"children":[],"context":{"retry":1000,"second":0,"time":""},"states":["tick","tick.reading","logind","logind.online"],"status":"active"}},"t":0}
+{"a":"clock","e":{"output":null,"state":"logind.online","token":5,"type":"done.invoke.sleeps"},"k":"invoke","o":"invoke","r":[{"a":"clock","e":"done.invoke.sleeps","tr":[6]}],"s":{"clock":{"states":["tick","tick.reading","logind","logind.offline"]}},"t":0}
+{"a":"clock","k":"stop","r":[],"s":{"clock":{"status":"stopped"}},"t":0}
+{"a":"clock","k":"start","m":"clock","r":[{"a":"clock","e":"ouro.init","tr":[]}],"s":{"clock":{"children":[],"context":{"retry":1000,"second":0,"time":""},"states":["tick","tick.reading","logind","logind.online"],"status":"active"}},"t":0}
+{"a":"clock","e":{"type":"RESUMED"},"k":"event","o":"generated","r":[{"a":"clock","e":"RESUMED","tr":[1]}],"t":0}
+{"a":"clock","k":"stop","r":[],"s":{"clock":{"status":"stopped"}},"t":0}
+{"a":"clock","k":"start","m":"clock","r":[{"a":"clock","e":"ouro.init","tr":[]}],"s":{"clock":{"children":[],"context":{"retry":1000,"second":0,"time":""},"states":["tick","tick.reading","logind","logind.online"],"status":"active"}},"t":0}
+{"a":"clock","e":{"output":{},"state":"tick.reading","token":3,"type":"done.invoke.date"},"k":"invoke","o":"invoke","r":[{"a":"clock","e":"done.invoke.date","tr":[2]}],"s":{"clock":{"states":["tick","tick.waiting","logind","logind.online"]}},"t":0}
+{"a":"clock","e":{"state":"tick.waiting","time_ms":60000,"token":6,"type":"after.minute.tick.waiting"},"k":"timer","o":"timer","r":[{"a":"clock","e":"after.minute.tick.waiting","tr":[3]}],"s":{"clock":{"states":["tick","tick.reading","logind","logind.online"]}},"t":60000}
+{"a":"clock","k":"stop","r":[],"s":{"clock":{"status":"stopped"}},"t":60000}
+{"a":"clock","k":"start","m":"clock","r":[{"a":"clock","e":"ouro.init","tr":[]}],"s":{"clock":{"children":[],"context":{"retry":1000,"second":0,"time":""},"states":["tick","tick.reading","logind","logind.online"],"status":"active"}},"t":60000}
+{"a":"clock","e":{"output":null,"state":"logind.online","token":5,"type":"done.invoke.sleeps"},"k":"invoke","o":"invoke","r":[{"a":"clock","e":"done.invoke.sleeps","tr":[6]}],"s":{"clock":{"states":["tick","tick.reading","logind","logind.offline"]}},"t":60000}
+{"a":"clock","e":{"state":"logind.offline","time_ms":61000,"token":6,"type":"after.retry.logind.offline"},"k":"timer","o":"timer","r":[{"a":"clock","e":"after.retry.logind.offline","tr":[4]}],"s":{"clock":{"context":{"retry":2000},"states":["tick","tick.reading","logind","logind.online"]}},"t":61000}
+{"a":"clock","k":"stop","r":[],"s":{"clock":{"status":"stopped"}},"t":61000}
+{"a":"clock","k":"start","m":"clock","r":[{"a":"clock","e":"ouro.init","tr":[]}],"s":{"clock":{"children":[],"context":{"retry":1000,"second":0,"time":""},"states":["tick","tick.reading","logind","logind.online"],"status":"active"}},"t":61000}
+{"a":"clock","e":{"type":"CONNECTED"},"k":"event","o":"generated","r":[{"a":"clock","e":"CONNECTED","tr":[5]}],"t":61000}
+{"a":"clock","k":"stop","r":[],"s":{"clock":{"status":"stopped"}},"t":61000}
+{"a":"clock","k":"start","m":"clock","r":[{"a":"clock","e":"ouro.init","tr":[]}],"s":{"clock":{"children":[],"context":{"retry":1000,"second":0,"time":""},"states":["tick","tick.reading","logind","logind.online"],"status":"active"}},"t":61000}
+{"a":"clock","e":{"error":"generated error","state":"logind.online","token":5,"type":"error.invoke.sleeps"},"k":"invoke","o":"invoke","r":[{"a":"clock","e":"error.invoke.sleeps","tr":[7]}],"s":{"clock":{"states":["tick","tick.reading","logind","logind.offline"]}},"t":61000}
+{"a":"clock","k":"stop","r":[],"s":{"clock":{"status":"stopped"}},"t":61000}
