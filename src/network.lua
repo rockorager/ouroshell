@@ -3,6 +3,7 @@ local appearance = require("appearance")
 local config = require("config")
 local support = require("dbus_support")
 local f = ouro.tokens.foundation
+local machine = ouro.machine
 local M = {}
 local networkd = "org.freedesktop.network1"
 local iwd = "net.connman.iwd"
@@ -111,134 +112,200 @@ function M.read_stations(bus)
   return stations
 end
 
-function M.connect()
-  local state = ouro.signal(nil)
-  local links, stations
-  local function publish() state:set(M.snapshot(links, stations)) end
-  support.supervise { bus = "system",
-    session = function(bus, healthy)
-      local changes <close> = support.need(bus:subscribe {
-        sender = networkd, interface = "org.freedesktop.DBus.Properties",
-        member = "PropertiesChanged", close_on_owner_change = true,
-      })
-      while true do
-        links = M.read_links(bus)
-        publish()
-        healthy()
-        support.need(changes:next())
-      end
-    end,
-    down = function() links = nil; publish() end,
-  }
-  -- Separate sessions keep Ethernet status working when iwd is unavailable.
-  support.supervise { bus = "system",
-    session = function(bus, healthy)
-      local changes <close> = support.need(bus:subscribe { sender = iwd, close_on_owner_change = true })
-      local owner = support.need(bus:call {
-        destination = "org.freedesktop.DBus", path = "/org/freedesktop/DBus", interface = "org.freedesktop.DBus",
-        member = "GetNameOwner", signature = "s", args = { iwd }, timeout_ms = 5000,
-      }).args[1]
-      local registered = {}
-      local agent_path = "/dev/ouro/shell/SignalLevelAgent"
-      local function read_rssi(station)
-        local diagnostics = bus:call {
-          destination = iwd, path = station.path, interface = iwd .. ".StationDiagnostic",
-          member = "GetDiagnostics", signature = "", args = {}, timeout_ms = 5000,
-        }
-        local rssi = diagnostics and support.properties(diagnostics.args[1]).RSSI
-        station.rssi = type(rssi) == "number" and rssi or nil
-      end
-      local agent <close> = support.need(bus:export {
-        path = agent_path, interface = iwd .. ".SignalLevelAgent",
-        methods = {
-          Changed = { input = "oy", output = "", handler = function(request)
-            if request.sender ~= owner then
-              return nil, { name = "org.freedesktop.DBus.Error.AccessDenied", message = "Not iwd" }
-            end
-            for _, station in pairs(stations or {}) do
-              if station.path == request.args[1] and (station.state == "connected" or station.state == "roaming") then
-                station.level = request.args[2]
-                read_rssi(station)
-              end
-            end
-            publish()
-            return {}
-          end },
-          Release = { input = "o", output = "", handler = function(request)
-            if request.sender ~= owner then
-              return nil, { name = "org.freedesktop.DBus.Error.AccessDenied", message = "Not iwd" }
-            end
-            registered[request.args[1]] = nil
-            for _, station in pairs(stations or {}) do
-              if station.path == request.args[1] then station.level, station.rssi = nil, nil end
-            end
-            publish()
-            return {}
-          end },
-        },
-      })
-      local function refresh()
-        local previous = stations or {}
-        stations = M.read_stations(bus)
-        for name, station in pairs(stations) do
-          local old = previous[name]
-          if old and old.path == station.path and old.network == station.network and old.ap == station.ap
-            and (station.state == "connected" or station.state == "roaming") then
-            station.level, station.rssi = old.level, old.rssi
-          end
-          -- Seed the level after a connection/roam even if RSSI stayed in the
-          -- same band and iwd did not send a Changed callback. No periodic scans.
-          if station.state == "connected" and station.level == nil then
-            read_rssi(station)
-            if station.rssi then
-              station.level = 0
-              for _, threshold in ipairs(thresholds) do
-                if station.rssi < threshold then station.level = station.level + 1 end
-              end
-            end
-          end
-        end
-        publish()
-        for _, station in pairs(stations) do
-          if station.available and not registered[station.path] then
-            -- Some drivers do not support RSSI events, or another client owns
-            -- the single agent slot. Connection status must still work.
-            registered[station.path] = bus:call {
-              destination = iwd, path = station.path, interface = iwd .. ".Station",
-              member = "RegisterSignalLevelAgent", signature = "oan",
-              args = { agent_path, thresholds }, timeout_ms = 5000,
-            } ~= nil
-          end
-        end
-        healthy()
-      end
-      refresh()
-      while true do
-        local message = support.need(changes:next())
-        local interface = message.args[1]
-        if message.member == "PropertiesChanged" and
-          (interface == iwd .. ".Device" or interface == iwd .. ".Station" or interface == iwd .. ".Network") then
-          refresh()
-        elseif message.member == "InterfacesAdded" or message.member == "InterfacesRemoved" then
-          for _, value in ipairs(message.args[2]) do
-            local added_interface = type(value) == "table" and value[1] or value
-            if added_interface == iwd .. ".Device" or added_interface == iwd .. ".Station" then
-              registered[message.args[1]] = nil
-              refresh()
-              break
-            end
-          end
-        end
-      end
-    end,
-    down = function() stations = nil; publish() end,
-  }
-  return state
+local function seed(rssi)
+  local level = 0
+  for _, threshold in ipairs(thresholds) do
+    if rssi < threshold then level = level + 1 end
+  end
+  return level
 end
 
-function M.content(state)
+local function associated(station)
+  return station.state == "connected" or station.state == "roaming"
+end
+
+-- A fresh iwd read merged over the previous stations: a station still on the
+-- same network and access point keeps its signal level from iwd's agent;
+-- after a connection or roam the level is seeded from the RSSI read with it,
+-- even if it stayed in the same band and iwd sent no Changed callback.
+function M.merge(previous, fresh)
+  local stations = {}
+  for name, station in pairs(fresh) do
+    local merged = {}
+    for key, value in pairs(station) do merged[key] = value end
+    local old = (previous or {})[name]
+    if old and old.path == merged.path and old.network == merged.network and old.ap == merged.ap
+      and associated(merged) then
+      merged.level = old.level
+      merged.rssi = merged.rssi or old.rssi
+    end
+    if merged.state == "connected" and merged.level == nil and merged.rssi then merged.level = seed(merged.rssi) end
+    stations[name] = merged
+  end
+  return stations
+end
+
+-- Applies fn(copy) to the station at `path`, returning new stations.
+local function update_station(stations, path, fn)
+  local updated = {}
+  for name, station in pairs(stations or {}) do
+    if station.path == path then
+      local copy = {}
+      for key, value in pairs(station) do copy[key] = value end
+      fn(copy)
+      station = copy
+    end
+    updated[name] = station
+  end
+  return updated
+end
+
+-- Headless link and Wi-Fi state. `links` is networkd's description (nil
+-- while networkd is unavailable) and `stations` iwd's, by interface name
+-- (nil while iwd is unavailable). Each service reconnects independently,
+-- so Ethernet status keeps working without iwd. The indicator is the plain
+-- function M.snapshot(links, stations).
+--   services.networkd(_, send): serves networkd (sends LINKS)
+--   services.iwd(_, send): serves iwd and its signal agent (sends STATIONS, LEVEL, RELEASED)
+function M.chart(services)
+  local assign, unset = machine.assign, machine.unset
+  return machine.create {
+    id = "network", type = "parallel", order = { "networkd", "iwd" },
+    context = { networkd_retry = support.retry, iwd_retry = support.retry },
+    events = {
+      LINKS = { links = "table?" },
+      STATIONS = { stations = "table" },
+      LEVEL = { path = "string", level = "integer", rssi = "number?" },
+      RELEASED = { path = "string" },
+    },
+    actors = { networkd = services.networkd, iwd = services.iwd },
+    delays = support.delays("networkd_retry", "iwd_retry"),
+    actions = {
+      links = assign(function(_, e) return { links = e.links or unset, networkd_retry = support.retry } end),
+      stations = assign(function(c, e) return { stations = M.merge(c.stations, e.stations), iwd_retry = support.retry } end),
+      level = assign { stations = function(c, e)
+        return update_station(c.stations, e.path, function(station)
+          if associated(station) then station.level, station.rssi = e.level, e.rssi end
+        end)
+      end },
+      released = assign { stations = function(c, e)
+        return update_station(c.stations, e.path, function(station) station.level, station.rssi = nil, nil end)
+      end },
+      networkd_lost = assign { links = unset },
+      iwd_lost = assign { stations = unset },
+    },
+    states = {
+      networkd = support.reconnecting { src = "networkd", retry = "networkd_retry", down = "networkd_lost",
+        online = { on = { LINKS = { actions = "links" } } } },
+      iwd = support.reconnecting { src = "iwd", retry = "iwd_retry", down = "iwd_lost",
+        online = { on = {
+          STATIONS = { actions = "stations" },
+          LEVEL = { actions = "level" },
+          RELEASED = { actions = "released" },
+        } } },
+    },
+  }
+end
+
+-- Services over `connect(bus)` (support.connect, or a fake in tests).
+function M.make_services(connect)
+  local services = {}
+
+  function services.networkd(_, send)
+    local bus <close> = connect("system")
+    local changes <close> = support.need(bus:subscribe {
+      sender = networkd, interface = "org.freedesktop.DBus.Properties",
+      member = "PropertiesChanged", close_on_owner_change = true,
+    })
+    while true do
+      send { type = "LINKS", links = M.read_links(bus) }
+      support.need(changes:next())
+    end
+  end
+
+  local function read_rssi(bus, path)
+    local diagnostics = bus:call {
+      destination = iwd, path = path, interface = iwd .. ".StationDiagnostic",
+      member = "GetDiagnostics", signature = "", args = {}, timeout_ms = 5000,
+    }
+    local rssi = diagnostics and support.properties(diagnostics.args[1]).RSSI
+    return type(rssi) == "number" and rssi or nil
+  end
+
+  function services.iwd(_, send)
+    local bus <close> = connect("system")
+    local changes <close> = support.need(bus:subscribe { sender = iwd, close_on_owner_change = true })
+    local owner = support.need(bus:call {
+      destination = "org.freedesktop.DBus", path = "/org/freedesktop/DBus", interface = "org.freedesktop.DBus",
+      member = "GetNameOwner", signature = "s", args = { iwd }, timeout_ms = 5000,
+    }).args[1]
+    -- Which station objects accepted the agent, for this connection only.
+    local registered = {}
+    local agent_path = "/dev/ouro/shell/SignalLevelAgent"
+    local function deny() return nil, { name = "org.freedesktop.DBus.Error.AccessDenied", message = "Not iwd" } end
+    local agent <close> = support.need(bus:export {
+      path = agent_path, interface = iwd .. ".SignalLevelAgent",
+      methods = {
+        Changed = { input = "oy", output = "", handler = function(request)
+          if request.sender ~= owner then return deny() end
+          local path = request.args[1]
+          send { type = "LEVEL", path = path, level = request.args[2], rssi = read_rssi(bus, path) }
+          return {}
+        end },
+        Release = { input = "o", output = "", handler = function(request)
+          if request.sender ~= owner then return deny() end
+          registered[request.args[1]] = nil
+          send { type = "RELEASED", path = request.args[1] }
+          return {}
+        end },
+      },
+    })
+    local function refresh()
+      local stations = M.read_stations(bus)
+      for _, station in pairs(stations) do
+        if station.state == "connected" then station.rssi = read_rssi(bus, station.path) end
+      end
+      send { type = "STATIONS", stations = stations }
+      for _, station in pairs(stations) do
+        if station.available and not registered[station.path] then
+          -- Some drivers do not support RSSI events, or another client owns
+          -- the single agent slot. Connection status must still work.
+          registered[station.path] = bus:call {
+            destination = iwd, path = station.path, interface = iwd .. ".Station",
+            member = "RegisterSignalLevelAgent", signature = "oan",
+            args = { agent_path, thresholds }, timeout_ms = 5000,
+          } ~= nil
+        end
+      end
+    end
+    refresh()
+    while true do
+      local message = support.need(changes:next())
+      local interface = message.args[1]
+      if message.member == "PropertiesChanged" and
+        (interface == iwd .. ".Device" or interface == iwd .. ".Station" or interface == iwd .. ".Network") then
+        refresh()
+      elseif message.member == "InterfacesAdded" or message.member == "InterfacesRemoved" then
+        for _, value in ipairs(message.args[2]) do
+          local added_interface = type(value) == "table" and value[1] or value
+          if added_interface == iwd .. ".Device" or added_interface == iwd .. ".Station" then
+            registered[message.args[1]] = nil
+            refresh()
+            break
+          end
+        end
+      end
+    end
+  end
+
+  return services
+end
+
+M.services = M.make_services(support.connect)
+
+function M.content(state, scheme)
   if not state then return nil end
-  local theme, palette = appearance.colors()
+  local theme, palette = appearance.colors(scheme)
   local color = state.warning and palette.amber.step_11
     or state.muted and theme.muted_foreground or theme.sidebar_foreground
   local function icon(name, key)

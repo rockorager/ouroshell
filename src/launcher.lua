@@ -3,6 +3,7 @@ local appearance = require("appearance")
 local config = require("config")
 local overlay = require("overlay")
 local f = ouro.tokens.foundation
+local machine = ouro.machine
 
 local M = {}
 -- Result rows accommodate two text lines; the frame surrounds the 560x620
@@ -82,162 +83,171 @@ function M.launch_argv(entry, prepare_launch)
   return argv
 end
 
--- services.catalog: application catalog from catalog.lua
--- services.dismiss: closes the launcher
--- services.idle: native session controller with lock, toggle and status
--- services.prepare_launch, services.call: optional launch overrides for fixtures
-function M.new(services)
-  local catalog = services.catalog
-  local state = {
-    catalog = catalog,
-    idle = services.idle, dismiss = services.dismiss,
-    query = ouro.signal(""), selected = ouro.signal(1),
-    scope = ouro.signal("all"), page = ouro.signal(nil), confirming = ouro.signal(nil),
-    focus = ouro.signal(0),
-    message = ouro.signal(nil), launching = ouro.signal(false),
+local function wrap(index, delta, count)
+  if count == 0 then return 1 end
+  return ((index - 1 + delta) % count) + 1
+end
+
+-- The rows for one launcher view: a plain function of the launcher's
+-- context and the other charts it reads.
+--   view.entries: the catalog; view.caffeinated, view.scheme: session and appearance
+function M.results(c, view)
+  local query = normalized(c.query)
+  local results = {}
+  if not c.page and c.scope ~= "system" then
+    results = M.search(view.entries, query)
+    -- The home view is a starting point; Apps browses the complete catalog.
+    if c.scope == "all" and query == "" then
+      while #results > 3 do table.remove(results) end
+    end
+  end
+  if c.page or c.scope ~= "apps" then
+    local actions = c.page and { session_actions[1], session_actions[2], session_actions[3] }
+      or query == "" and { lock, session }
+      or { lock, session_actions[1], session_actions[2], session_actions[3] }
+    if not c.page then
+      local active = view.caffeinated
+      actions[#actions + 1] = {
+        id = "caffeine", name = active and "Decaffeinate" or "Caffeinate", kind = "system",
+        icon = "alarm-symbolic", active = active,
+        description = active and "Resume automatic locking, display sleep, and idle suspend"
+          or "Pause automatic locking, display sleep, and idle suspend",
+        keywords = { "caffeinate", "decaffeinate", "idle", "keep awake" },
+      }
+      -- prefer's setter is Varlink-only; its CLI stores the preference and
+      -- the Settings portal broadcasts it, which the shell then follows.
+      local dark = view.scheme == "dark"
+      actions[#actions + 1] = {
+        id = "color-scheme", name = dark and "Switch to light theme" or "Switch to dark theme", kind = "system",
+        icon = dark and "weather-clear-symbolic" or "weather-clear-night-symbolic",
+        keywords = { "theme", "toggle color scheme", "dark mode", "light mode", "appearance" },
+        argv = { "prefer", "set", "color-scheme", dark and "light" or "dark" },
+      }
+    end
+    for _, action in ipairs(actions) do
+      if score(action, query) then results[#results + 1] = action end
+    end
+  end
+  return results
+end
+
+-- The launcher's presentation state, spawned by the shell each time it
+-- opens, so reopening resets the query, scope, page and confirmation. The
+-- view computes results and hands ACTIVATE the selected row and MOVE the row
+-- count; the chart decides what a row means. Destructive session actions
+-- confirm first, with Cancel selected. Success or Escape at the top level
+-- reaches `dismissed`, which the shell takes as closing.
+--   services.execute(entry): performs a row; raises with a message on failure
+function M.chart(services)
+  local assign, unset = machine.assign, machine.unset
+  local refocus = { focus = function(c) return c.focus + 1 end }
+  local function refocused(fields)
+    fields.focus = refocus.focus
+    return assign(fields)
+  end
+  return machine.create {
+    id = "launcher", initial = "browsing",
+    context = { query = "", scope = "all", selected = 1, focus = 0 },
+    events = {
+      QUERY = { value = "string" },
+      MOVE = { delta = "integer", count = "integer" },
+      SCOPE = { value = "string" },
+      ACTIVATE = { entry = "table?" },
+      CONFIRM = {}, BACK = {},
+    },
+    actors = { execute = services.execute },
+    guards = {
+      submenu = function(_, e) return e.entry ~= nil and e.entry.submenu == true end,
+      confirm = function(_, e) return e.entry ~= nil and e.entry.verb ~= nil end,
+      entry = function(_, e) return e.entry ~= nil end,
+      in_page = function(c) return c.page ~= nil end,
+      confirming = function(c) return c.confirming ~= nil end,
+    },
+    actions = {
+      query = assign(function(_, e) return { query = e.value, selected = 1, message = unset } end),
+      move = assign { selected = function(c, e) return wrap(c.selected, e.delta, e.count) end },
+      scope = refocused { scope = function(_, e) return e.value end, page = unset, query = "", selected = 1, message = unset },
+      page = refocused { page = "session", query = "", selected = 1, message = unset },
+      leave_page = refocused { page = unset, query = "", selected = 1, message = unset },
+      -- Cancel, never the destructive action, is the default.
+      ask = refocused { confirming = function(_, e) return e.entry end, selected = 1 },
+      cancel = refocused { confirming = unset, selected = 1, message = unset },
+      run = assign { target = function(_, e) return e.entry end, message = unset },
+      run_confirmed = assign { target = function(c) return c.confirming end, message = unset },
+      failed = refocused { message = function(_, e) return "Request failed: " .. tostring(e.error) end },
+    },
+    on = { QUERY = { actions = "query" } },
+    states = {
+      browsing = { on = {
+        MOVE = { actions = "move" },
+        SCOPE = { actions = "scope" },
+        ACTIVATE = {
+          { guard = "submenu", actions = "page" },
+          { guard = "confirm", target = "confirming", actions = "ask" },
+          { guard = "entry", target = "executing", actions = "run" },
+        },
+        BACK = { { guard = "in_page", actions = "leave_page" }, { target = "dismissed" } },
+      } },
+      confirming = { on = {
+        MOVE = { actions = "move" },
+        CONFIRM = { target = "executing", actions = "run_confirmed" },
+        BACK = { target = "browsing", actions = "cancel" },
+      } },
+      -- One request at a time; Escape abandons it.
+      executing = {
+        invoke = { src = "execute", input = function(c) return c.target end,
+          on_done = "dismissed",
+          on_error = { { target = "confirming", guard = "confirming", actions = "failed" },
+                       { target = "browsing", actions = "failed" } } },
+        on = { BACK = "dismissed" },
+      },
+      dismissed = { type = "final" },
+    },
   }
+end
 
-  function state.results()
-    local query = normalized(state.query())
-    local results = {}
-    if not state.page() and state.scope() ~= "system" then
-      results = M.search(catalog.entries(), query)
-      -- The home view is a starting point; Apps browses the complete catalog.
-      if state.scope() == "all" and query == "" then
-        while #results > 3 do table.remove(results) end
+-- Performs a launcher row. Native session actions go to the session chart
+-- (system id "session"); everything else is a fixed request to Ouro's MCP
+-- endpoint.
+--   options.prepare_launch, options.call, options.address: overrides for fixtures
+function M.execute(options)
+  options = options or {}
+  return function(entry)
+    if entry.kind == "system" and entry.id == "lock" then
+      machine.system("session"):send("LOCK")
+      return
+    elseif entry.kind == "system" and entry.id == "caffeine" then
+      local session = assert(machine.system("session"), "Idle control is unavailable")
+      if entry.active then
+        assert(session:send("DECAFFEINATE"), "Caffeine is not active")
+        return
       end
+      assert(session:send("CAFFEINATE"), "Idle control is unavailable; logind is not connected")
+      -- The label changes only once logind granted the inhibitor.
+      local snapshot = machine.wait_for(session, function(s)
+        return machine.matches(s, "logind.online.caffeine.on.held") or not machine.matches(s, "logind.online.caffeine.on")
+      end, { timeout = 10000 })
+      if not machine.matches(snapshot, "logind.online.caffeine.on.held") then
+        error(snapshot.context.caffeine_error or "Idle control is unavailable; logind is not connected", 0)
+      end
+      return
     end
-    if state.page() or state.scope() ~= "apps" then
-      local actions = state.page() and session_actions
-        or query == "" and { lock, session }
-        or { lock, session_actions[1], session_actions[2], session_actions[3] }
-      if services.idle and not state.page() then
-        local active = services.idle.caffeinated()
-        actions[#actions + 1] = {
-          id = "caffeine", name = active and "Decaffeinate" or "Caffeinate", kind = "system",
-          icon = "alarm-symbolic",
-          description = active and "Resume automatic locking, display sleep, and idle suspend"
-            or "Pause automatic locking, display sleep, and idle suspend",
-          keywords = { "caffeinate", "decaffeinate", "idle", "keep awake" },
-        }
-      end
-      if not state.page() then
-        -- prefer's setter is Varlink-only; its CLI stores the preference and
-        -- the Settings portal broadcasts it, which the shell then follows.
-        local dark = appearance.scheme() == "dark"
-        actions[#actions + 1] = {
-          id = "color-scheme", name = dark and "Switch to light theme" or "Switch to dark theme", kind = "system",
-          icon = dark and "weather-clear-symbolic" or "weather-clear-night-symbolic",
-          keywords = { "theme", "toggle color scheme", "dark mode", "light mode", "appearance" },
-          argv = { "prefer", "set", "color-scheme", dark and "light" or "dark" },
-        }
-      end
-      for _, action in ipairs(actions) do
-        if score(action, query) then results[#results + 1] = action end
-      end
-    end
-    return results
-  end
-
-  function state.change(value)
-    state.query:set(value)
-    state.selected:set(1)
-    state.message:set(nil)
-  end
-  local function refocus()
-    -- Mouse actions move focus; hand it back to the search field.
-    state.focus:set(state.focus() + 1)
-  end
-  function state.choose_scope(scope)
-    state.scope:set(scope)
-    state.page:set(nil)
-    state.confirming:set(nil)
-    state.change("")
-    refocus()
-  end
-  function state.open() state.choose_scope("all") end
-  function state.back()
-    if state.confirming() then
-      state.confirming:set(nil)
-      state.selected:set(1)
-      state.message:set(nil)
-      refocus()
-    elseif state.page() then
-      state.page:set(nil)
-      state.change("")
-      refocus()
+    local tool, arguments = "run", nil
+    if entry.kind == "system" then
+      tool = entry.tool or "run"
+      arguments = entry.argv and { argv = entry.argv } or {}
     else
-      services.dismiss()
+      arguments = { argv = M.launch_argv(entry, options.prepare_launch or ouro.xdg.applications.prepare_launch) }
+    end
+    local address = options.address
+      or "unix:" .. assert(ouro.xdg.runtime_dir, "XDG_RUNTIME_DIR is unavailable") .. "/ouro.mcp.sock"
+    local reply = (options.call or ouro.mcp.call)(address, tool, arguments)
+    if reply.error then error(reply.error.message, 0) end
+    if reply.result and reply.result.isError then
+      local detail = reply.result.structuredContent and reply.result.structuredContent.error
+      error(detail and detail.message or "Ouro rejected the request", 0)
     end
   end
-  function state.move(delta)
-    local count = state.confirming() and 2 or #state.results()
-    state.selected:set(count == 0 and 1 or ((state.selected() - 1 + delta) % count) + 1)
-  end
-  local function execute(entry)
-    if state.launching() then return end
-    state.launching:set(true)
-    state.message:set(nil)
-    local native_action = entry.kind == "system" and (entry.id == "lock" or entry.id == "caffeine")
-    local spawn = native_action and ouro.spawn_app or ouro.spawn
-    spawn(function()
-      local ok, failure = pcall(function()
-        if native_action then
-          local controller = assert(services.idle, "Native session handling is unavailable")
-          if entry.id == "lock" then controller.lock() else controller.toggle() end
-          return
-        end
-        local tool, arguments = "run", nil
-        if entry.kind == "system" then
-          tool = entry.tool or "run"
-          arguments = entry.argv and { argv = entry.argv } or {}
-        else
-          arguments = { argv = M.launch_argv(entry, services.prepare_launch or ouro.xdg.applications.prepare_launch) }
-        end
-        local runtime = assert(ouro.xdg.runtime_dir, "XDG_RUNTIME_DIR is unavailable")
-        local reply = (services.call or ouro.mcp.call)("unix:" .. runtime .. "/ouro.mcp.sock", tool, arguments)
-        if reply.error then error(reply.error.message) end
-        if reply.result and reply.result.isError then
-          local detail = reply.result.structuredContent and reply.result.structuredContent.error
-          error(detail and detail.message or "Ouro rejected the request")
-        end
-      end)
-      state.launching:set(false)
-      if ok then services.dismiss() else
-        state.message:set("Request failed: " .. tostring(failure))
-        refocus()
-      end
-    end)
-  end
-  function state.confirm()
-    local entry = state.confirming()
-    if entry then execute(entry) end
-  end
-  function state.launch(entry)
-    entry = entry or state.results()[state.selected()]
-    if not entry or state.launching() then return end
-    if entry.submenu then
-      state.page:set("session")
-      state.change("")
-      refocus()
-    elseif entry.verb then
-      state.confirming:set(entry)
-      state.selected:set(1) -- Cancel, never the destructive action, is the default.
-      refocus()
-    else
-      execute(entry)
-    end
-  end
-  function state.command(command)
-    if command == "next" then state.move(1)
-    elseif command == "previous" then state.move(-1)
-    elseif command == "submit" then
-      if state.confirming() then
-        if state.selected() == 2 then state.confirm() else state.back() end
-      else state.launch() end
-    elseif command == "cancel" then state.back() end
-  end
-  return state
 end
 
 local function icon(key, name, size, tint)
@@ -252,7 +262,7 @@ local function result_key(entry)
   return (entry.kind == "system" and "system-" or "application-") .. entry.id
 end
 
-local function result_row(state, entry, index, colors)
+local function result_row(launcher, entry, index, selected, colors)
   local name = entry.icon
   if not name or name == ouro.json.null then name = "application-x-executable-symbolic" end
   local description = entry.description or entry.generic_name
@@ -272,18 +282,18 @@ local function result_row(state, entry, index, colors)
   if entry.submenu then contents[#contents + 1] = icon("disclosure", "go-next-symbolic", f.spacing_4, colors.muted) end
   return ouro.button {
     key = result_key(entry), label = entry.name, height = row_height,
-    background = index == state.selected() and colors.selected or colors.transparent,
-    border = index == state.selected() and colors.selected_border or colors.transparent, border_width = f.border_width_default,
+    background = index == selected and colors.selected or colors.transparent,
+    border = index == selected and colors.selected_border or colors.transparent, border_width = f.border_width_default,
     foreground = colors.foreground, hover = colors.hover,
-    on_press = function() state.launch(entry) end,
+    send = launcher:event { type = "ACTIVATE", entry = entry },
     children = { ouro.box { key = "contents", width = "fill", children = {
       ouro.row { key = "row", gap = f.spacing_4, cross_alignment = "center", children = contents },
     } } },
   }
 end
 
-local function confirmation(state, colors)
-  local entry = state.confirming()
+local function confirmation(launcher, c, colors)
+  local entry = c.confirming
   local children = {
     ouro.text { key = "title", text = entry.verb .. "?", size = f.typography_7, foreground = colors.foreground },
     ouro.text { key = "warning", text = "Save your work before continuing. Unsaved changes may be lost.",
@@ -293,17 +303,54 @@ local function confirmation(state, colors)
     children[#children + 1] = ouro.button {
       key = index == 1 and "cancel" or "confirm", label = label,
       foreground = index == 1 and colors.foreground or colors.error,
-      background = state.selected() == index and colors.selected or colors.transparent,
-      border = state.selected() == index and colors.selected_border or colors.border, border_width = f.border_width_default,
-      hover = colors.hover, on_press = index == 1 and state.back or state.confirm,
+      background = c.selected == index and colors.selected or colors.transparent,
+      border = c.selected == index and colors.selected_border or colors.border, border_width = f.border_width_default,
+      hover = colors.hover, send = launcher:event(index == 1 and "BACK" or "CONFIRM"),
     }
   end
   return ouro.column { key = "confirmation", gap = f.spacing_4, cross_alignment = "stretch", children = children }
 end
 
-function M.content(state, height, width)
+local results = machine.selector(function(c, entries, caffeinated, scheme)
+  return M.results(c, { entries = entries, caffeinated = caffeinated, scheme = scheme })
+end)
+
+-- The search field's commands. Lazy payloads: a key that outruns the
+-- rebuild after typing is resolved against the current state at dispatch,
+-- not the rows of the last render. props.current() reads the other charts.
+local function commands(props)
+  local launcher = props.launcher
+  local function rows(s)
+    local p = props.current()
+    return results(s.context, p.entries, p.caffeinated, p.scheme)
+  end
+  local function move(delta)
+    return launcher:event(function(s)
+      return { type = "MOVE", delta = delta, count = s.context.confirming and 2 or #rows(s) }
+    end)
+  end
+  return {
+    next = move(1),
+    previous = move(-1),
+    submit = launcher:event(function(s)
+      if s.context.confirming then return { type = s.context.selected == 2 and "CONFIRM" or "BACK" } end
+      local entry = rows(s)[s.context.selected]
+      return entry and { type = "ACTIVATE", entry = entry }
+    end),
+    cancel = launcher:event("BACK"),
+  }
+end
+
+-- props.launcher: the launcher actor; props.shell: the shell actor (dismissal)
+-- props.current(): these props, read again when a key is dispatched
+-- props.entries, props.catalog_phase, props.catalog_error: the catalog
+-- props.caffeinated, props.status: the session; props.scheme: the appearance
+function M.content(props, height, width)
   height, width = height or 760, width or 1280
-  local theme, palette = appearance.colors()
+  local launcher = props.launcher
+  local c = launcher:context()
+  local confirming = c.confirming ~= nil
+  local theme, palette = appearance.colors(props.scheme)
   local frame_width = math.min(560 + 2 * frame_padding, width - 2 * f.spacing_5)
   local frame_height = math.min(palette_height + 2 * frame_padding, height - 2 * f.spacing_5)
   -- Center the shadow image behind the card, clipped to the viewport.
@@ -319,28 +366,28 @@ function M.content(state, height, width)
     border = theme.border, accent = theme.primary, hover = theme.accent_hover,
     transparent = ouro.tokens.palette.transparent, line = theme.border,
   }
-  local results = state.results()
+  local rows = results(c, props.entries, props.caffeinated, props.scheme)
   -- Each virtual row is one result; the first result of a group also
   -- carries its heading, so revealing that row reveals the heading too.
   local headings, previous = {}, nil
-  for index, entry in ipairs(results) do
-    local group = entry.kind == "system" and (state.page() and "Session" or "System") or "Applications"
+  for index, entry in ipairs(rows) do
+    local group = entry.kind == "system" and (c.page and "Session" or "System") or "Applications"
     if group ~= previous then headings[index] = group end
     previous = group
   end
   local list
-  if state.confirming() then
-    list = ouro.scroll { key = "results-scroll", axis = "vertical", flex = 1, children = { confirmation(state, colors) } }
-  elseif #results == 0 then
+  if confirming then
+    list = ouro.scroll { key = "results-scroll", axis = "vertical", flex = 1, children = { confirmation(launcher, c, colors) } }
+  elseif #rows == 0 then
     list = ouro.box { key = "results-empty", width = "fill", flex = 1, children = {
       ouro.text { key = "empty", text = "No matches. Try another name or keyword.", size = f.typography_3, foreground = colors.muted },
     } }
   else
     list = ouro.virtual_list { key = "results", flex = 1,
-      item_count = #results, estimated_item_height = row_height + f.spacing_1,
-      item_key = function(index) return result_key(results[index]) end,
+      item_count = #rows, estimated_item_height = row_height + f.spacing_1,
+      item_key = function(index) return result_key(rows[index]) end,
       -- Layout reveals the keyboard selection; no row windowing is needed.
-      ensure_visible = state.selected(),
+      ensure_visible = c.selected,
       render_item = function(index)
         local children = {}
         if headings[index] then
@@ -348,34 +395,33 @@ function M.content(state, height, width)
           children[#children + 1] = ouro.text { key = "heading", text = headings[index],
             size = f.typography_2, foreground = colors.muted }
         end
-        children[#children + 1] = result_row(state, results[index], index, colors)
+        children[#children + 1] = result_row(launcher, rows[index], index, c.selected, colors)
         children[#children + 1] = ouro.box { key = "spacing", height = 0 }
         return ouro.column { key = "row", gap = f.spacing_1, cross_alignment = "stretch", children = children }
       end,
     }
   end
   local tabs = {}
-  if state.page() or state.confirming() then
+  if c.page or confirming then
     tabs[1] = ouro.button { key = "back", label = "← Back",
-      background = colors.transparent, foreground = colors.muted, hover = colors.hover, on_press = state.back }
+      background = colors.transparent, foreground = colors.muted, hover = colors.hover, send = launcher:event("BACK") }
   else
     for _, scope in ipairs({ { "all", "All" }, { "apps", "Apps" }, { "system", "System" } }) do
-      local active = state.scope() == scope[1]
+      local active = c.scope == scope[1]
       tabs[#tabs + 1] = ouro.column { key = "scope-" .. scope[1], gap = 0, cross_alignment = "stretch", children = {
         ouro.button { key = "button", label = scope[2],
           background = colors.transparent, foreground = active and colors.foreground or colors.muted, hover = colors.hover,
-          on_press = function() state.choose_scope(scope[1]) end },
+          send = launcher:event { type = "SCOPE", value = scope[1] } },
         ouro.box { key = "indicator", width = "fill", height = f.border_width_strong, background = active and colors.accent or colors.transparent },
       } }
     end
   end
-  local status = state.message() or (state.idle and state.idle.status and state.idle.status())
-  if not status and state.launching() then status = "Sending request…" end
-  if not status and state.scope() ~= "system" and not state.page() then
-    local phase = state.catalog.phase()
-    if phase == "loading" then status = "Loading applications…"
-    elseif phase == "error" then
-      status = "Applications could not be loaded (" .. tostring(state.catalog.error())
+  local status = c.message or props.status
+  if not status and launcher:matches("executing") then status = "Sending request…" end
+  if not status and c.scope ~= "system" and not c.page then
+    if props.catalog_phase == "loading" then status = "Loading applications…"
+    elseif props.catalog_phase == "failed" then
+      status = "Applications could not be loaded (" .. tostring(props.catalog_error)
         .. "). System actions are still available."
     end
   end
@@ -385,7 +431,7 @@ function M.content(state, height, width)
     } },
     ouro.box { key = "position", width = "fill", height = "fill", padding = f.spacing_5, alignment = "center", children = {
       ouro.box { key = "palette", width = frame_width, height = frame_height,
-        on_pointer_down_outside = { propagate = false, handler = function() state.dismiss() end },
+        on_pointer_down_outside = { propagate = false, handler = props.shell:event("DISMISS") },
         padding = frame_padding - f.border_width_default, radius = f.radius_6,
         background = theme == ouro.tokens.dark and palette.slate.step_3 or theme.card,
         border = palette.slate.step_6, border_width = f.border_width_default, children = {
@@ -396,12 +442,12 @@ function M.content(state, height, width)
               ouro.box { key = "search-inset-start", width = f.spacing_1 },
               icon("search-icon", "system-search-symbolic", f.spacing_5, colors.foreground),
               ouro.text_input {
-                key = "search", text = state.confirming() and "" or state.query(),
-                label = "Search apps and commands", placeholder = state.confirming() and "Confirmation" or "Search apps and commands…",
-                autofocus = true, focus_request = state.focus(), read_only = state.confirming() ~= nil, flex = 1,
+                key = "search", text = confirming and "" or c.query,
+                label = "Search apps and commands", placeholder = confirming and "Confirmation" or "Search apps and commands…",
+                autofocus = true, focus_request = c.focus, read_only = confirming, flex = 1,
                 padding_x = 0, border_width = 0, background = colors.transparent,
-                foreground = colors.foreground, on_change = state.change,
-                on_command = state.command,
+                foreground = colors.foreground, send = launcher:event("QUERY"),
+                on_command = commands(props),
               },
               ouro.box { key = "search-inset-end", width = f.spacing_1 },
             } },
@@ -410,9 +456,9 @@ function M.content(state, height, width)
             ouro.row { key = "tabs", gap = f.spacing_2, children = tabs }, rule("scope-rule", colors),
           } },
           list,
-          ouro.text { key = "status", text = status or ("↑ ↓  Navigate     Enter  " .. (state.confirming() and "Choose" or "Open")
-              .. "     Esc  " .. ((state.page() or state.confirming()) and "Back" or "Close")),
-            size = f.typography_2, foreground = state.message() and colors.error or colors.muted, max_lines = 2 },
+          ouro.text { key = "status", text = status or ("↑ ↓  Navigate     Enter  " .. (confirming and "Choose" or "Open")
+              .. "     Esc  " .. ((c.page or confirming) and "Back" or "Close")),
+            size = f.typography_2, foreground = c.message and colors.error or colors.muted, max_lines = 2 },
         } },
       } },
     } },

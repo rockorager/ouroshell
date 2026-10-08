@@ -1,5 +1,6 @@
 local ouro = require("ouro")
-local M = {}
+local machine = ouro.machine
+local M = { retry = 1000, max_retry = 30000 }
 
 -- Returns `value`, or raises the D-Bus error table that came with it.
 function M.need(value, failure)
@@ -21,25 +22,50 @@ function M.properties(dictionary)
   return values
 end
 
--- Runs `session(bus, healthy)` on a fresh connection for the life of the
--- shell. A session ends by returning or raising, for example when a
--- close_on_owner_change stream closes or the bus drops. Each end calls
--- `down(failure)`, then reconnects after an exponential backoff that
--- `healthy()` resets once the session is serving again.
-function M.supervise(options)
-  local initial, limit = options.retry or 1000, options.max_retry or 30000
-  ouro.spawn(function()
-    local retry = initial
-    while true do
-      local _, failure = pcall(function()
-        local bus <close> = M.need(ouro.dbus.connect(options.bus))
-        options.session(bus, function() retry = initial end)
-      end)
-      if options.down then options.down(failure) end
-      ouro.sleep(retry)
-      retry = math.min(retry * 2, limit)
-    end
-  end)
+-- Opens a bus connection that closes with the calling task (an invoke).
+function M.connect(bus)
+  return M.need(ouro.dbus.connect(bus))
+end
+
+-- Resets the backoff stored in context[key] once a session is serving.
+function M.reset(key)
+  return machine.assign { [key] = M.retry }
+end
+
+-- Named `delays` for charts using M.reconnecting: each backoff waits
+-- context[key] on the logical clock.
+function M.delays(...)
+  local delays = {}
+  for _, key in ipairs({ ... }) do delays[key] = function(c) return c[key] end end
+  return delays
+end
+
+-- A compound state that keeps a D-Bus session running for as long as it is
+-- active. `online` invokes `options.src`, an `fn(input, send)` service that
+-- serves until its connection ends; it reports with the chart's own events.
+-- When it returns or raises, `offline` runs `options.down` and waits out an
+-- exponential backoff: the named delay `options.retry` (declare it with
+-- M.delays) reads context[options.retry], then the session reconnects. Use
+-- M.reset(options.retry) on the event that shows the session is healthy.
+-- Leaving the state cancels both.
+--   options.online: extra fields of the online state (on, states, initial...)
+--   options.max: the longest backoff (30 s by default)
+function M.reconnecting(options)
+  local key, limit = options.retry, options.max or M.max_retry
+  local online = options.online or {}
+  online.invoke = { id = options.src, src = options.src, input = options.input,
+    on_done = "offline", on_error = { target = "offline", actions = options.failed } }
+  return {
+    initial = "online",
+    states = {
+      online = online,
+      offline = {
+        entry = options.down,
+        after = { [key] = { target = "online",
+          actions = machine.assign { [key] = function(c) return math.min(c[key] * 2, limit) end } } },
+      },
+    },
+  }
 end
 
 return M

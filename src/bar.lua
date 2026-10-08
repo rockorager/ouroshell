@@ -26,18 +26,22 @@ local function belongs_to_output(workspace, output)
   return false
 end
 
--- props.workspaces: workspace state from ouro.shell.workspaces
+-- A pure view: every field is a snapshot value or an event binding.
+-- props.workspaces: an actor whose context has `available` and `workspaces`
+--   (watch snapshots), taking ACTIVATE { handle }
 -- props.time: formatted clock text
 -- props.output: output name to filter workspaces, or nil for fixtures
--- props.open_launcher, props.open_notifications: optional button handlers
+-- props.open_launcher, props.open_notifications: optional event bindings
 -- props.power, props.connectivity: optional battery and network snapshots
--- props.audio: optional volume state
+-- props.volume: optional volume actor
 -- props.quiet: whether Do Not Disturb is on
 -- props.unread: notifications that arrived since history was last opened
--- props.caffeinated, props.decaffeinate: idle-inhibitor state and its release
+-- props.caffeinated, props.decaffeinate: idle-inhibitor state and the binding that releases it
+-- props.scheme: "light" or "dark"
 function M.content(props)
-  local state, output = props.workspaces, props.output
-  local theme, palette = appearance.colors()
+  local actor, output = props.workspaces, props.output
+  local state = actor:context()
+  local theme, palette = appearance.colors(props.scheme)
   local colors = {
     foreground = theme.sidebar_foreground, muted = theme.muted_foreground,
     hover = theme.sidebar_accent, selected = theme.accent_selected,
@@ -73,7 +77,8 @@ function M.content(props)
       hover = workspace.active and colors.selected_hover or colors.hover,
       disabled = background,
       disabled_foreground = foreground,
-      on_press = workspace.can_activate and not workspace.active and workspace.activate or nil,
+      send = workspace.can_activate and not workspace.active
+        and actor:event { type = "ACTIVATE", handle = workspace.handle } or nil,
     }
   end
   if #items == 0 then
@@ -92,7 +97,7 @@ function M.content(props)
     status[#status + 1] = ouro.tooltip { key = "caffeine", text = description, gap = 16, children = {
       ouro.button { key = "decaffeinate", label = description, padding_x = f.spacing_2,
         background = colors.transparent, foreground = colors.foreground, hover = colors.hover,
-        on_press = props.decaffeinate, children = {
+        send = props.decaffeinate, children = {
           ouro.xdg.icon { key = "icon", name = "alarm-symbolic", theme = config.icon_theme,
             tint = colors.foreground, width = f.spacing_4, height = f.spacing_4, alt = "" },
         } },
@@ -101,17 +106,17 @@ function M.content(props)
   if props.connectivity then
     -- Match the visible gap contributed by the bell's horizontal padding.
     status[#status + 1] = ouro.box { key = "network-spacing",
-      padding_right = (props.audio or props.power) and f.spacing_2 or 0,
-      children = { network.content(props.connectivity) },
+      padding_right = (props.volume or props.power) and f.spacing_2 or 0,
+      children = { network.content(props.connectivity, props.scheme) },
     }
   end
-  if props.audio then
+  if props.volume then
     status[#status + 1] = ouro.box { key = "volume-spacing",
       padding_right = props.power and f.spacing_2 or 0,
-      children = { volume.content(props.audio) },
+      children = { volume.content(props.volume, props.scheme) },
     }
   end
-  if props.power then status[#status + 1] = battery.content(props.power) end
+  if props.power then status[#status + 1] = battery.content(props.power, props.scheme) end
   if props.open_notifications then
     local unread = props.unread or 0
     local bell = {
@@ -126,7 +131,7 @@ function M.content(props)
       label = unread > 0 and ("Open notifications, " .. unread .. " unread") or "Open notifications",
       padding_x = f.spacing_2,
       background = colors.transparent, foreground = colors.foreground, hover = colors.hover,
-      on_press = props.open_notifications, children = {
+      send = props.open_notifications, children = {
         ouro.row { key = "content", gap = f.spacing_1, cross_alignment = "center", children = bell },
       } }
   end
@@ -147,7 +152,7 @@ function M.content(props)
         children = {
           ouro.button { key = "launcher", label = "Open launcher",
             background = colors.transparent, foreground = colors.muted, hover = colors.hover,
-            on_press = props.open_launcher, children = {
+            send = props.open_launcher, children = {
               ouro.text { key = "mark", text = "●", foreground = colors.muted },
             } },
           ouro.scroll {

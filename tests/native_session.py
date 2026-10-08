@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -20,16 +21,24 @@ from gi.repository import GLib
 from native_launcher import ROOT, BINARY, Logind, Portal, call, development_endpoint, pump
 
 KIT = Path(os.environ.get("OUROKIT", ROOT.parent / "ourokit"))
+# The peer imports its sibling helpers (desktop_native) from Ourokit's tests.
+sys.path.insert(0, str(KIT / "tests"))
 spec = importlib.util.spec_from_file_location("session_peer", KIT / "tests/session_native.py")
 wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 
 SOURCE = r'''
 local o = require("ouro")
-local idle = require("idle")
+local appearance = require("appearance")
 local lock = require("lock")
-local state
+local session = require("session")
+local scheme = appearance.chart(appearance.services):actor { id = "appearance" }
+local state = session.chart(session.services):actor { id = "session" }
+-- Locking dismisses the shell's overlays; this fixture has none to close.
+local shell = o.machine.create { id = "shell", initial = "idle", events = { DISMISS = {} },
+  states = { idle = { on = { DISMISS = {} } } } }:actor { id = "shell", system_id = "shell" }
 local empty = { type = "object", properties = {}, additionalProperties = false }
+local reads = { time = function() return "Mon Sep 28  02:27 PM" end, scheme = function() return scheme:context().scheme end }
 return o.app {
   id = "dev.ouro.shell.session-test",
   actions = {
@@ -41,22 +50,26 @@ return o.app {
         message = { type = "string" }, caffeinated = { type = "boolean" },
       } },
       handler = function()
-        local prompt = state.locker.prompt()
-        return { phase = state.locker.phase(), prompt = prompt and prompt.text or "",
-          message = state.locker.message() or "", caffeinated = state.caffeinated() }
+        local c = state:context()
+        return { phase = lock.phase(state), prompt = c.prompt and c.prompt.text or "",
+          message = c.message or "", caffeinated = session.caffeinated(state) }
       end,
     },
     ["fixture.caffeine"] = {
       description = "Toggle idle handling in this disposable test fixture.",
       inputSchema = empty, outputSchema = empty,
-      handler = function() o.spawn_app(state.toggle); return {} end,
+      handler = function()
+        state:send(session.caffeinated(state) and "DECAFFEINATE" or "CAFFEINATE")
+        return {}
+      end,
     },
   },
   run = function()
-    require("appearance").connect()
-    state = idle.connect { dismiss = function() end }
+    scheme:start()
+    shell:start()
+    state:start()
     return { windows = function()
-      local window = lock.window(state.locker, function() return "Mon Sep 28  02:27 PM" end)
+      local window = lock.window(state, reads)
       return window and { window } or {}
     end }
   end,

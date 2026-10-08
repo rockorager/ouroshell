@@ -440,11 +440,12 @@ def main():
                 keys("-k", "Return")
                 pump(1)
                 assert len(logind.readers) == 2 and logind.held(), "retry after denial failed"
-                # Reload now accepts structural window changes. The fresh Lua
-                # state closes the launcher; reopen it before testing input.
+                # Reload carries chart state: Caffeinate survives as a fresh
+                # inhibitor, and the previous generation's FD is released.
                 call(endpoint, "runtime.reload")
-                pump(.2)
-                assert not logind.held(), "reload leaked its inhibitor"
+                pump(1)
+                assert len(logind.readers) == 3, "reload did not restore caffeine"
+                assert not logind.held(logind.readers[1]) and logind.held(), "reload leaked or lost its inhibitor"
                 call(endpoint, "launcher.toggle")
                 keys("Fixture")
                 searched = capture("search")

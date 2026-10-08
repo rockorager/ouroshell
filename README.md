@@ -119,9 +119,15 @@ Idle handling additionally requires the native session/authentication work:
 Ourokit [66b3e64b27fb](https://github.com/rockorager/ourokit/commit/66b3e64b27fb4f911671d8a8b6c1264d7cb52834)
 or later. The network animation additionally uses `ouro.animation`, Box opacity,
 and automatic reduced-motion support. Its hover description uses `ouro.tooltip`;
-setup pins the required Ourokit
+uses Ourokit
 [60f586c63395](https://github.com/rockorager/ourokit/commit/60f586c633954b56f9e79f5f6c43222597e7f877)
-with content-sized native surfaces and matching light/dark colors.
+or later, with content-sized native surfaces and matching light/dark colors.
+The statechart application model (`ouro.machine`, `send=` bindings, surface
+events, `machine.actions`, transient handles, named delays, invoke `receive`,
+system ids, lazy and multi-target bindings, and `ouro.shell.workspaces.watch`)
+requires Ourokit
+[9010bc9](https://github.com/rockorager/ourokit/commit/9010bc932f5cd5da9f2f9f61db0c126152637e8a),
+which setup pins.
 See Ourokit's `docs/session.md` for the native API contracts and security limits.
 Rebuild Ourokit with these APIs rather than using an older installed `ouroctl`.
 
@@ -247,11 +253,13 @@ entries use Monstar's explicit `monstar -e COMMAND ARG...` form. DBus-only
 entries without `Exec` are not presented, and `TryExec` is deliberately ignored.
 
 The launcher, notification center and notification popup are mutually
-exclusive. One `overlay` signal in `src/application.lua` names whichever is
-showing, and the reactive `windows()` declaration derives the windows from it.
+exclusive. The `shell` chart (`src/shell.lua`) names whichever is showing, and
+the reactive `windows()` declaration derives the windows from it. Each opening
+spawns a fresh launcher chart, so reopening resets the query, scope and page.
 A notification never replaces the launcher or the open center; it stays in
-history instead. The bar stays mounted while overlays come and go. Development reload
-accepts structural window changes and resets the launcher's Lua state.
+history instead. The bar stays mounted while overlays come and go. Development
+reload accepts structural window changes and keeps chart state (see
+[Application model](#application-model)).
 
 Ourokit pins Wayring's destroyed-object dispatch fix, which is required to
 close a focused window without losing the shared Wayland connection.
@@ -317,8 +325,10 @@ or an explicit suspend request. Other applications' inhibitors remain in force.
 Logind idle inhibitors are system-wide, so this can affect other sessions too.
 The launcher changes its label only after acquisition succeeds; failures stay
 visible. While caffeinated, the bar shows an alarm-clock indicator; clicking it
-decaffeinates. Closing the launcher retains the inhibitor. Reloading/stopping the
-shell or losing logind releases it and resets the toggle; it is not persisted.
+decaffeinates. Closing the launcher retains the inhibitor. Stopping the shell
+or losing logind releases it and resets the toggle; it is not persisted.
+Development reload keeps Caffeinate on: the old generation's FD is released
+and the reloaded chart acquires a fresh inhibitor.
 
 The user service manager must have the session's `WAYLAND_DISPLAY` environment
 (import it during compositor startup, before starting the service). The
@@ -367,20 +377,13 @@ Run `.agents/setup` from the repository root to repeat setup manually; in an orb
 use `/usr/bin/python3 tests/native_launcher.py` for the native tests so Python
 can find the system-installed Pillow package.
 
-Run the Lua behavior checks (requires a standalone Lua interpreter):
+Run the headless chart and view tests with the pinned `ouroctl`, from `src/`
+so modules resolve as they do in the app. The D-Bus service tests need a
+standalone Lua (their fakes use `setmetatable`, which Ourokit's sandbox lacks):
 
 ```sh
-lua tests/bar.lua
-lua tests/clock.lua
-lua tests/idle.lua
-lua tests/lock.lua
-lua tests/launcher.lua
-lua tests/appearance.lua
-lua tests/battery.lua
-lua tests/network.lua
-lua tests/volume.lua
-lua tests/notifications.lua
-lua tests/notification_service.lua
+(cd src && ../../ourokit/zig-out/bin/ouroctl test ../tests)
+lua tests/network_service.lua
 lua tests/notification_image.lua
 for file in src/*.lua tests/*.lua; do luac -p "$file"; done
 ```
@@ -540,8 +543,8 @@ advertising `ext-background-effect-v1`.
 
 The native launcher test also uses a private logind fixture with real D-Bus FD
 passing to verify Caffeinate/Decaffeinate, denied requests, inhibitor retention
-after dismissal, and release on reload. It never inhibits the host or suspends
-it. Lua tests cover logind owner loss and in-flight stale replies. Physical
+after dismissal, and a fresh inhibitor after reload. It never inhibits the host or suspends
+it. Chart tests cover logind owner loss and stale conversation results. Physical
 lid switches, PAM authentication, DPMS, and actual suspend need desktop testing.
 
 The native session integration test requires the matching Ourokit source and
@@ -552,6 +555,9 @@ logind service; it never authenticates against host PAM or suspends the host:
 OUROKIT=/path/to/ourokit OUROCTL=/path/to/ourokit/zig-out/bin/ouroctl \
   /usr/bin/python3 tests/native_session.py
 ```
+
+The prebuilt `ouroctl` ships the protocol XMLs the test peer needs, so no
+`zig build` is required.
 
 It exercises withheld lock acknowledgement, output hotplug, keyboard-driven
 PAM prompts, denial/retry, sleep-delay ownership, resume, Caffeinate and
@@ -570,23 +576,71 @@ The native tests use private development endpoints for diagnostics/reload and
 the standard D-Bus application interface for notification activation. They do
 not install units or restart the live shell.
 
+## Application model
+
+Ouroshell follows Ourokit's statechart application model
+(`design/statecharts.md` and `docs/application-model.md` in Ourokit). All
+shell state lives in `ouro.machine` charts; there are no `ouro.signal` or
+`ouro.stateful` app state holders. Root actors are created at load and
+started in `run()`:
+
+| Actor | Kind | Holds |
+| --- | --- | --- |
+| `appearance`, `clock`, `battery`, `network`, `volume`, `workspaces`, `catalog` | domain | portal scheme, time, UPower, networkd/iwd, PipeWire output and feedback, ext-workspace snapshots, desktop entries |
+| `session` | domain | idle timers, display power, lock ownership and PAM, logind sleep, delay and Caffeinate inhibitors |
+| `notifications` | domain | the daemon: history, Do Not Disturb, expiry and hold |
+| `shell` (+ `shell/launcher`) | UI | the showing overlay, unread and collapsed groups; the launcher's query, scope, page and confirmation |
+
+Domain charts are headless: each D-Bus or native resource (a bus session, an
+inhibitor FD, an idle timer, the PAM conversation, output power, the
+workspace watcher) belongs to an `invoke` of the state that needs it, so
+leaving the state releases it. Handles the chart must keep (the bus, the
+audio output, the lock owner, the conversation) are `transient` context
+fields: inspectable as markers, never persisted. Waits follow the logical
+clock: reconnect backoff and the minute boundary are named `delays`, and
+notification expiry uses `machine.sleep`. Root actors have system ids, so
+charts address each other with `machine.send_to { system = ... }` (locking
+dismisses the shell's overlays; arrivals tell the shell). Views are pure
+functions of snapshots; widgets carry `send = actor:event(...)` bindings
+(lazy for the launcher's keyboard commands, multi-target where one gesture
+notifies two charts), and every layer and lock surface is bound to an actor
+(`send = actor`) and reports `surface.*` events. The MCP actions come from
+`machine.actions`. Callbacks remain only where Ourokit needs real input
+provenance: notification activation tokens and `ouro.popup`.
+
+`ouroctl run --dev` exposes `runtime.statecharts` and `runtime.send`, so the
+Ourokit statechart visualizer can attach to a running shell:
+
+```sh
+../ourokit/zig-out/bin/ouroctl run ouro.json --dev   # prints the development socket
+../ourokit/zig-out/bin/ouroctl run ../ourokit/tools/statechart-visualizer/app.lua -- "unix:$development_socket"
+```
+
+Source reload carries every root actor (Ourokit §9). Transient handles come
+back as `nil` and the restored invokes acquire them again; the daemon also
+expires its live notifications into history, since the old connection and
+its expiry timers ended with the old generation.
+
 ## Layout
 
 - `ouro.json` declares the application identity and entrypoint.
-- `src/application.lua` wires the services, owns the overlay signal, and declares windows.
+- `src/application.lua` creates the root actors, wires them together, declares the MCP actions and windows.
+- `src/shell.lua` is the shell's UI chart: which overlay shows, unread notifications, collapsed groups.
 - `src/config.lua` holds desktop choices: icon theme, terminal, idle timeouts and PAM service.
-- `src/dbus_support.lua` supervises D-Bus sessions: reconnect with backoff, errors, dictionaries.
+- `src/dbus_support.lua` has the reconnecting D-Bus session state (backoff) and D-Bus helpers.
 - `src/appearance.lua` follows the Settings portal's color scheme.
 - `src/clock.lua` keeps minute-aligned local time across suspend.
-- `src/idle.lua` owns native idle/output power policy and logind sleep/idle inhibitors.
-- `src/lock.lua` owns native lock/authentication state and the lock-screen UI.
+- `src/session.lua` is the session chart: idle timers, display power, the lock and PAM, logind sleep and inhibitors.
+- `src/lock.lua` renders the lock screen from the session chart.
+- `src/workspaces.lua` follows compositor workspaces for the bar.
 - `src/catalog.lua` loads the desktop-entry catalog shared by the launcher and notifications.
 - `src/bar.lua` renders workspace state and status.
-- `src/battery.lua` owns the UPower subscription and battery indicator.
-- `src/network.lua` owns the networkd/iwd subscriptions and physical-link indicator.
-- `src/volume.lua` follows PipeWire output state and owns the volume icon, level display and timed feedback.
-- `src/launcher.lua` owns launcher search, state, launch policy, and content.
-- `src/notifications.lua` implements the `org.freedesktop.Notifications` daemon.
-- `src/notification_center.lua` holds notification history and renders cards, popups and the center.
+- `src/battery.lua` follows UPower and renders the battery indicator.
+- `src/network.lua` follows networkd/iwd and renders the physical-link indicator.
+- `src/volume.lua` follows PipeWire output state and renders the volume icon, level display and timed feedback.
+- `src/launcher.lua` holds launcher search, its chart, launch policy, and content.
+- `src/notifications.lua` implements the `org.freedesktop.Notifications` daemon chart.
+- `src/notification_center.lua` renders cards, popups and the center.
 - `src/preview.lua` and `src/notification-preview.lua` supply interactive visual fixtures.
-- `tests/fake_ouro.lua` is the shared stand-in for the `ouro` module in Lua tests.
+- `tests/*_test.lua` are `ouroctl test` chart and view tests; `tests/fake_ouro.lua` is the stand-in
+  `ouro` module for the standalone service tests.

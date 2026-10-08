@@ -61,6 +61,6 @@ ln -sfn "$ouroctl" "$ourokit/zig-out/bin/ouroctl"
 "$ourokit/zig-out/bin/ouroctl" --help >/dev/null
 
 echo 'Checking Ouroshell'
-lua "$root/tests/bar.lua"
-lua "$root/tests/launcher.lua"
+(cd "$root/src" && "$ourokit/zig-out/bin/ouroctl" test ../tests)
+(cd "$root" && lua tests/network_service.lua && lua tests/notification_image.lua)
 echo "Orb setup ready in ${SECONDS}s; native tests: /usr/bin/python3 tests/native_launcher.py"
