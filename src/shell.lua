@@ -9,10 +9,14 @@ local M = {}
 -- opening and stopped on closing. Context keeps which notifications arrived
 -- since the center was last opened (`unseen`) and which app groups the
 -- center has collapsed. A notification never replaces the launcher or the
--- open center; it stays in history instead.
+-- open center; it stays in history instead. Each launcher opening asks the
+-- catalog to refresh, so newly installed applications appear in it.
 --   launcher: the launcher chart
+--   catalog: the catalog actor's system id (optional; fixtures omit it)
 function M.chart(options)
   local spawn_launcher = machine.spawn(options.launcher, { id = "launcher" })
+  local open_launcher = { spawn_launcher }
+  if options.catalog then open_launcher[2] = machine.send_to({ system = options.catalog }, "REFRESH") end
   local see = assign { unseen = {} }
   return machine.create {
     id = "shell", initial = "none",
@@ -52,7 +56,7 @@ function M.chart(options)
         TOGGLE_CENTER = { target = "center", actions = see },
         NOTIFIED = { { guard = "popup", target = "popup", actions = { "unseen", "popup" } }, { actions = "unseen" } },
       } },
-      launcher = { entry = spawn_launcher, exit = machine.stop("launcher"),
+      launcher = { entry = open_launcher, exit = machine.stop("launcher"),
         on = {
           TOGGLE_LAUNCHER = "none", DISMISS = "none",
           TOGGLE_CENTER = { target = "center", actions = see },

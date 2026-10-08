@@ -446,6 +446,27 @@ def main():
                 pump(1)
                 assert len(logind.readers) == 3, "reload did not restore caffeine"
                 assert not logind.held(logind.readers[1]) and logind.held(), "reload leaked or lost its inhibitor"
+
+                # Install after startup: opening refreshes the catalog chart in
+                # the background and the already-open launcher shows the result.
+                def launcher_labels():
+                    view = call(endpoint, "runtime.inspect", arguments={"window": "launcher"})["structuredContent"]
+                    return [node.get("label") for node in view["windows"][0]["nodes"]]
+
+                late_app = apps / "folio-refresh.desktop"
+                late_app.write_text("[Desktop Entry]\nType=Application\nName=Folio Refresh Fixture\nExec=folio-fixture\n")
+                call(endpoint, "launcher.toggle")
+                keys("Folio Refresh")
+                wait_for(lambda: "Folio Refresh Fixture" in launcher_labels(), "new desktop entry did not appear without reload")
+                capture("catalog-refreshed")
+                keys("-k", "Escape")
+                late_app.unlink()
+                call(endpoint, "launcher.toggle")
+                keys("Folio Refresh")
+                wait_for(lambda: "No matches. Try another name or keyword." in launcher_labels(),
+                         "removed desktop entry survived catalog refresh")
+                keys("-k", "Escape")
+
                 call(endpoint, "launcher.toggle")
                 keys("Fixture")
                 searched = capture("search")

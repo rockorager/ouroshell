@@ -2,6 +2,7 @@
 -- the view mounted against real actors with fake services.
 local o = require("ouro")
 local machine = o.machine
+local catalog = require("catalog")
 local launcher = require("launcher")
 local shell = require("shell")
 
@@ -34,6 +35,25 @@ local function start(execute)
   end }
   local clock = machine.manual_scheduler()
   return chart:start { scheduler = clock }, clock, requests
+end
+
+-- A catalog actor addressed by the shell under a test-local system id, and the
+-- shell that refreshes it on each launcher opening. Scans are settled by the
+-- clock; the catalog's list service never runs.
+local function catalog_shell(system_id)
+  local clock = machine.manual_scheduler()
+  local actor = catalog.chart { list = function() error("a real scan ran in a test") end }
+    :actor { id = "catalog", system_id = system_id, scheduler = clock }:start()
+  local ui = shell.chart { launcher = launcher.chart { execute = function() end }, catalog = system_id }
+    :start { scheduler = clock }
+  local function scans()
+    local count = 0
+    for _, item in ipairs(clock.pending_invokes()) do
+      if item.actor == "catalog" and item.id == "list" then count = count + 1 end
+    end
+    return count
+  end
+  return actor, ui, clock, scans
 end
 
 local function row(id)
@@ -172,5 +192,73 @@ return {
     assert(ui:child("launcher"):context().page == nil)
     t:key("escape")
     assert(ui:matches("none") and ui:child("launcher") == nil, "Back at the top closes the launcher")
+  end,
+
+  ["each launcher opening refreshes the catalog without losing its entries"] = function()
+    local actor, ui, clock, scans = catalog_shell("catalog-refresh")
+    assert(actor:matches("loading") and scans() == 1)
+    ui:send("TOGGLE_LAUNCHER")
+    assert(actor:matches("loading") and scans() == 1 and not actor:can("REFRESH"),
+      "opening during the startup scan shares it")
+    clock.resolve("list", entries)
+    assert(actor:matches("ready.idle") and ids(actor:context().entries) == ids(entries))
+    ui:send("TOGGLE_LAUNCHER")
+    assert(actor:matches("ready.idle"), "closing does not scan")
+    ui:send("TOGGLE_LAUNCHER")
+    assert(actor:matches("ready.refreshing") and scans() == 1)
+    assert(ids(actor:context().entries) == ids(entries), "the cached entries stay while refreshing")
+    ui:send("TOGGLE_LAUNCHER")
+    ui:send("TOGGLE_LAUNCHER")
+    assert(scans() == 1 and not actor:can("REFRESH"), "reopening during a refresh neither restarts nor overlaps it")
+    ui:send("DISMISS")
+    assert(actor:matches("ready.refreshing"), "a refresh outlives the launcher")
+    local folio = { id = "folio.desktop", name = "Folio", exec = "folio", visible = true }
+    clock.resolve("list", { folio })
+    assert(actor:matches("ready.idle") and ids(actor:context().entries) == "folio.desktop")
+    ui:send("TOGGLE_LAUNCHER")
+    clock.reject("list", "refresh unavailable")
+    assert(actor:matches("ready.idle") and ids(actor:context().entries) == "folio.desktop",
+      "a failed refresh keeps the last successful catalog")
+    assert(actor:context().error:find("refresh unavailable", 1, true))
+    ui:send("TOGGLE_LAUNCHER")
+    ui:send("TOGGLE_LAUNCHER")
+    clock.resolve("list", {})
+    assert(#actor:context().entries == 0 and actor:context().error == nil,
+      "an empty refresh removes uninstalled entries and clears the old error")
+    actor:stop()
+  end,
+
+  ["a failed startup scan is retried by the next opening"] = function()
+    local actor, ui, clock, scans = catalog_shell("catalog-retry")
+    clock.reject("list", "offline")
+    assert(actor:matches("failed") and actor:context().error == "offline")
+    ui:send("TOGGLE_LAUNCHER")
+    assert(actor:matches("loading") and scans() == 1)
+    clock.resolve("list", entries)
+    assert(actor:matches("ready.idle") and actor:context().error == nil)
+    actor:stop()
+  end,
+
+  ["a refresh updates the open launcher and keeps its search"] = function(t)
+    local actor, ui, clock = catalog_shell("catalog-view")
+    clock.resolve("list", entries)
+    ui:send("TOGGLE_LAUNCHER")
+    local function props()
+      return { launcher = ui:child("launcher"), shell = ui, scheme = "light", entries = actor:context().entries,
+        catalog_phase = actor:matches("loading") and "loading" or "ready", caffeinated = false, current = props }
+    end
+    t:mount(function() return ui:child("launcher") and launcher.content(props(), 760, 1280) end,
+      { width = 1280, height = 760, padding = 0 })
+    local base = "launcher/position/palette/content"
+    ui:child("launcher"):send { type = "QUERY", value = "folio" }
+    t:settle()
+    assert(t:node(base .. "/results-empty/empty").label == "No matches. Try another name or keyword.")
+    local folio = { id = "folio.desktop", name = "Folio", exec = "folio", visible = true }
+    clock.resolve("list", { folio, entries[1] })
+    t:settle()
+    assert(ui:child("launcher"):context().query == "folio", "the refresh keeps the search")
+    local key = "application-folio.desktop"
+    assert(t:node(base .. "/results/" .. key .. "/row/" .. key).label == "Folio", "the open launcher shows the new entry")
+    actor:stop()
   end,
 }

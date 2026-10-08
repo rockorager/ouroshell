@@ -223,6 +223,14 @@ change selection, Enter opens, and Escape goes back or dismisses. Clicking
 outside the card also dismisses it. Scope buttons and rows are clickable. Reopening resets the query and any pending confirmation.
 Application-provided menu items are not implemented or shown yet.
 
+The `catalog` chart caches the application catalog. Each opening sends it
+`REFRESH`, which rescans in the background (`ready.refreshing`) while the
+launcher shows the cached entries. New results reach the open launcher without
+clearing its search; installed and removed applications appear in the
+refreshed results. A refresh is ignored while a scan runs, so scans never
+overlap, and a failed refresh keeps the last successful catalog. There is no
+periodic polling or filesystem watcher.
+
 System offers Lock screen, Session, Caffeinate (Decaffeinate while active),
 and Switch to dark/light theme. Caffeinate pauses inactivity handling; see below
 for its scope. The theme action runs `prefer set color-scheme dark|light`, since

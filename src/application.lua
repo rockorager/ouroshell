@@ -32,7 +32,7 @@ root("network", network.chart(network.services))
 root("volume", volume.chart(volume.services))
 root("workspaces", workspaces.chart(workspaces.services))
 root("catalog", catalog.chart(catalog.services))
-root("shell", shell.chart { launcher = launcher.chart { execute = launcher.execute() } })
+root("shell", shell.chart { launcher = launcher.chart { execute = launcher.execute() }, catalog = "catalog" })
 root("session", session.chart(session.services))
 root("notifications", notifications.chart(notifications.services))
 
@@ -71,6 +71,7 @@ local function launcher_props()
   return {
     launcher = actors.shell:child("launcher"), shell = actors.shell, scheme = scheme(), current = launcher_props,
     entries = catalog_state:context().entries,
+    -- A background refresh keeps showing the cached entries (`ready`).
     catalog_phase = catalog_state:matches("loading") and "loading" or catalog_state:matches("failed") and "failed" or "ready",
     catalog_error = catalog_state:context().error,
     caffeinated = session.caffeinated(actors.session), status = actors.session:context().status,
