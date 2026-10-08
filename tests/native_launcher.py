@@ -4,6 +4,7 @@
 Requires sibling Ourokit built, sway, grim, wtype, Pillow, and PyGObject. Optional
 OUROSHELL_TEST_ARTIFACTS preserves captures and protocol logs.
 """
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,40 @@ from gi.repository import Gio, GLib
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = Path(os.environ.get("OUROCTL", ROOT.parent / "ourokit/zig-out/bin/ouroctl"))
+# Where development runs would record statecharts without isolation.
+HOST_RECORDINGS = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "ourokit/recordings"
+
+
+def _host_recordings():
+    if not HOST_RECORDINGS.is_dir():
+        return {}
+    return {path.name: (path.stat().st_size, path.stat().st_mtime_ns) for path in HOST_RECORDINGS.glob("dev.ouro.*")}
+
+
+@contextlib.contextmanager
+def isolated_state(recorded=True):
+    """Give every process the test starts a temporary XDG_STATE_HOME.
+
+    `ouroctl run --dev` records statechart inputs under
+    $XDG_STATE_HOME/ourokit/recordings; tests must not fill the user's.
+    Afterwards, assert the host recordings are untouched and, when
+    `recorded`, that the runs recorded into the temporary directory instead.
+    """
+    before = _host_recordings()
+    previous = os.environ.get("XDG_STATE_HOME")
+    with tempfile.TemporaryDirectory(prefix="ouroshell-state-") as state:
+        os.environ["XDG_STATE_HOME"] = state
+        try:
+            yield Path(state)
+        finally:
+            if previous is None:
+                del os.environ["XDG_STATE_HOME"]
+            else:
+                os.environ["XDG_STATE_HOME"] = previous
+        assert _host_recordings() == before, f"a test process wrote recordings to {HOST_RECORDINGS}"
+        if recorded:
+            assert list((Path(state) / "ourokit/recordings").glob("*.jsonl")), \
+                "development runs did not record into the temporary XDG_STATE_HOME"
 
 
 class Portal:
@@ -656,4 +691,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # The appearance-only preview runs without --dev, so it records nothing.
+    with isolated_state(recorded="--appearance-only" not in sys.argv):
+        main()

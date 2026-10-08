@@ -8,7 +8,7 @@ import tempfile
 import time
 
 from PIL import Image, ImageChops
-from native_launcher import BINARY, ROOT, Portal, call, development_endpoint, pump, virtual_pointer, wait_for
+from native_launcher import BINARY, ROOT, Portal, call, development_endpoint, pump, virtual_pointer, wait_for, isolated_state
 
 
 def main():
@@ -114,4 +114,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with isolated_state():
+        main()

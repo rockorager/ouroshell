@@ -11,18 +11,15 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 
 from PIL import Image
 from gi.repository import GLib
-from native_launcher import ROOT, BINARY, Logind, Portal, call, development_endpoint, pump
+from native_launcher import ROOT, BINARY, Logind, Portal, call, development_endpoint, pump, isolated_state
 
 KIT = Path(os.environ.get("OUROKIT", ROOT.parent / "ourokit"))
-# The peer imports its sibling helpers (desktop_native) from Ourokit's tests.
-sys.path.insert(0, str(KIT / "tests"))
 spec = importlib.util.spec_from_file_location("session_peer", KIT / "tests/session_native.py")
 wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
@@ -296,4 +293,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with isolated_state():
+        main()

@@ -7,7 +7,7 @@ import tempfile
 import time
 
 from gi.repository import Gio, GLib
-from native_launcher import BINARY, ROOT, call, development_endpoint, wait_for
+from native_launcher import BINARY, ROOT, call, development_endpoint, wait_for, isolated_state
 
 
 def main():
@@ -89,4 +89,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with isolated_state():
+        main()
