@@ -26,8 +26,8 @@ HOST_RECORDINGS = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local
 
 def _host_recordings():
     if not HOST_RECORDINGS.is_dir():
-        return {}
-    return {path.name: (path.stat().st_size, path.stat().st_mtime_ns) for path in HOST_RECORDINGS.glob("dev.ouro.*")}
+        return set()
+    return {path.name for path in HOST_RECORDINGS.glob("dev.ouro.*")}
 
 
 @contextlib.contextmanager
@@ -36,8 +36,10 @@ def isolated_state(recorded=True):
 
     `ouroctl run --dev` records statechart inputs under
     $XDG_STATE_HOME/ourokit/recordings; tests must not fill the user's.
-    Afterwards, assert the host recordings are untouched and, when
-    `recorded`, that the runs recorded into the temporary directory instead.
+    Afterwards, assert that no new dev.ouro.* recording appeared there and,
+    when `recorded`, that the runs recorded into the temporary directory
+    instead. Existing host recordings may change: a live shell running with
+    --dev keeps appending to its own.
     """
     before = _host_recordings()
     previous = os.environ.get("XDG_STATE_HOME")
@@ -50,7 +52,8 @@ def isolated_state(recorded=True):
                 del os.environ["XDG_STATE_HOME"]
             else:
                 os.environ["XDG_STATE_HOME"] = previous
-        assert _host_recordings() == before, f"a test process wrote recordings to {HOST_RECORDINGS}"
+        created = sorted(_host_recordings() - before)
+        assert not created, f"a test process wrote recordings to {HOST_RECORDINGS}: {created}"
         if recorded:
             assert list((Path(state) / "ourokit/recordings").glob("*.jsonl")), \
                 "development runs did not record into the temporary XDG_STATE_HOME"
