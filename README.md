@@ -27,7 +27,8 @@ physical links with routable addresses, with separate Ethernet and Wi-Fi icons
 when both are connected, rather than guessing a primary route. VPN and virtual
 Ethernet interfaces do not replace physical-link status. All states are icon-only;
 hovering the indicator shows the Wi-Fi network name and signal percentage, such
-as `Bothe Consulting (87%)`, in a native tooltip below the bar. Detailed status
+as `Bothe Consulting (87%)`, in a native tooltip below the bar. It opens as
+soon as the pointer arrives, without the default hover delay, and fades in. Detailed status
 remains in icon accessibility labels. Wi-Fi uses iwd signal-level callbacks
 updating the bars; diagnostics read RSSI on connect, roam, and signal-level
 changes. The percentage uses NetworkManager's −100…−40 dBm quality scale and is

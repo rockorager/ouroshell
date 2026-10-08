@@ -327,7 +327,10 @@ function M.content(state, scheme)
       end,
     } }
   end
-  return ouro.tooltip { key = "network", text = state.tooltip or state.label,
+  -- Hover and the tooltip's opening delay are native (Ourokit's continuous
+  -- input stays out of charts). Open on hover without the default 500 ms
+  -- delay; the default 120 ms enter fade stays.
+  return ouro.tooltip { key = "network", text = state.tooltip or state.label, delay = 0,
     -- The anchor is the 16px icon, centered within the 40px bar.
     gap = 16, children = {
       ouro.row { key = "icons", gap = f.spacing_1, cross_alignment = "center", children = children },

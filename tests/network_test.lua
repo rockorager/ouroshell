@@ -96,4 +96,12 @@ return {
     assert(now().label == "Offline" and actor:context().networkd_retry == 1000)
   end,
 
+  ["the tooltip opens on hover without a delay and keeps the default fade"] = function()
+    local tooltip, seen = o.tooltip, nil
+    o.tooltip = function(props) seen = props; return tooltip(props) end
+    network.content(network.snapshot({ wifi }, { wlan0 = { name = "Test Wi-Fi", level = 0 } }), "light")
+    o.tooltip = tooltip
+    assert(seen.text == "Test Wi-Fi" and seen.gap == 16, "the tooltip sits below the bar")
+    assert(seen.delay == 0 and seen.duration == nil, "it starts immediately and keeps the 120 ms enter fade")
+  end,
 }
